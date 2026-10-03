@@ -1,5 +1,7 @@
 # verify-formally
 
+[![skills.sh](https://skills.sh/b/theishandubey/verify-formally)](https://skills.sh/theishandubey/verify-formally)
+
 An agent skill that finds real bugs by modeling a codebase's risky logic in TLA+ and Lean 4, checking the models, and turning every counterexample into a failing test against the real code.
 
 The rule that makes it trustworthy: **a finding exists only when a model counterexample is reproduced by a failing test on the unmodified code.**
