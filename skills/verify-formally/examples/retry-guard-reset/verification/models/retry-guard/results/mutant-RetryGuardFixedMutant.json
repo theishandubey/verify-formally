@@ -1,0 +1,91 @@
+{
+  "result": "invariant_violation",
+  "violated": "BoundedAttempts",
+  "states_generated": 34,
+  "distinct_states": 23,
+  "depth": 6,
+  "constants": {
+    "MaxErrors": "2",
+    "MaxTimeouts": "2",
+    "Fixed": "TRUE",
+    "MutantNoIncrement": "FALSE",
+    "MutantAttemptsStrict": "TRUE"
+  },
+  "invariants": [
+    "TypeOK",
+    "BoundedAttempts"
+  ],
+  "properties": [],
+  "check_deadlock": true,
+  "trace": [
+    {
+      "index": 1,
+      "action": "<Initial predicate>",
+      "vars": {
+        "errors": "0",
+        "attempts": "0",
+        "status": "\"running\"",
+        "timeouts": "0"
+      }
+    },
+    {
+      "index": 2,
+      "action": "<TransientStep line 41, col 3 to line 48, col 73 of module RetryGuard>",
+      "vars": {
+        "errors": "1",
+        "attempts": "1",
+        "status": "\"running\"",
+        "timeouts": "0"
+      }
+    },
+    {
+      "index": 3,
+      "action": "<TimeoutStep line 51, col 3 to line 58, col 73 of module RetryGuard>",
+      "vars": {
+        "errors": "0",
+        "attempts": "2",
+        "status": "\"running\"",
+        "timeouts": "1"
+      }
+    },
+    {
+      "index": 4,
+      "action": "<TransientStep line 41, col 3 to line 48, col 73 of module RetryGuard>",
+      "vars": {
+        "errors": "1",
+        "attempts": "3",
+        "status": "\"running\"",
+        "timeouts": "0"
+      }
+    },
+    {
+      "index": 5,
+      "action": "<TimeoutStep line 51, col 3 to line 58, col 73 of module RetryGuard>",
+      "vars": {
+        "errors": "0",
+        "attempts": "4",
+        "status": "\"running\"",
+        "timeouts": "1"
+      }
+    },
+    {
+      "index": 6,
+      "action": "<SuccessStep line 34, col 3 to line 38, col 26 of module RetryGuard>",
+      "vars": {
+        "errors": "0",
+        "attempts": "5",
+        "status": "\"succeeded\"",
+        "timeouts": "1"
+      }
+    }
+  ],
+  "tlc_version": "2.19",
+  "tla2tools_release": "1.7.4",
+  "elapsed_seconds": 0.148,
+  "raw_log": "verification/models/retry-guard/results/mutant-RetryGuardFixedMutant.log",
+  "exit_code": 12,
+  "spec": "verification/models/retry-guard/RetryGuard.tla",
+  "cfg": "verification/models/retry-guard/mutants/RetryGuardFixedMutant.cfg",
+  "command": "scripts/run_tlc.sh verification/models/retry-guard/RetryGuard.tla verification/models/retry-guard/mutants/RetryGuardFixedMutant.cfg --out verification/models/retry-guard/results/mutant-RetryGuardFixedMutant.json --workers 1 --quiet",
+  "error_detail": "Invariant BoundedAttempts is violated."
+}

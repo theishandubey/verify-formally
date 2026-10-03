@@ -1,0 +1,7 @@
+name = "srcstray"
+defaultTargets = ["Foo"]
+
+[[lean_lib]]
+name = "Foo"
+srcDir = "src"
+roots = ["Foo"]

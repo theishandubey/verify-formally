@@ -1,0 +1,60 @@
+{
+  "result": "invariant_violation",
+  "violated": "SanityReachesGaveUp",
+  "states_generated": 7,
+  "distinct_states": 6,
+  "depth": 3,
+  "constants": {
+    "MaxErrors": "2",
+    "MaxTimeouts": "2",
+    "Fixed": "TRUE",
+    "MutantNoIncrement": "FALSE",
+    "MutantAttemptsStrict": "FALSE"
+  },
+  "invariants": [
+    "SanityReachesGaveUp"
+  ],
+  "properties": [],
+  "check_deadlock": true,
+  "trace": [
+    {
+      "index": 1,
+      "action": "<Initial predicate>",
+      "vars": {
+        "errors": "0",
+        "attempts": "0",
+        "status": "\"running\"",
+        "timeouts": "0"
+      }
+    },
+    {
+      "index": 2,
+      "action": "<TransientStep line 41, col 3 to line 48, col 73 of module RetryGuard>",
+      "vars": {
+        "errors": "1",
+        "attempts": "1",
+        "status": "\"running\"",
+        "timeouts": "0"
+      }
+    },
+    {
+      "index": 3,
+      "action": "<TransientStep line 41, col 3 to line 48, col 73 of module RetryGuard>",
+      "vars": {
+        "errors": "2",
+        "attempts": "2",
+        "status": "\"gave_up\"",
+        "timeouts": "0"
+      }
+    }
+  ],
+  "tlc_version": "2.19",
+  "tla2tools_release": "1.7.4",
+  "elapsed_seconds": 0.146,
+  "raw_log": "verification/models/retry-guard/results/sanity-ReachesGaveUpFixedSmall.log",
+  "exit_code": 12,
+  "spec": "verification/models/retry-guard/RetryGuard.tla",
+  "cfg": "verification/models/retry-guard/sanity/ReachesGaveUpFixedSmall.cfg",
+  "command": "scripts/run_tlc.sh verification/models/retry-guard/RetryGuard.tla verification/models/retry-guard/sanity/ReachesGaveUpFixedSmall.cfg --out verification/models/retry-guard/results/sanity-ReachesGaveUpFixedSmall.json --workers 1 --quiet",
+  "error_detail": "Invariant SanityReachesGaveUp is violated."
+}

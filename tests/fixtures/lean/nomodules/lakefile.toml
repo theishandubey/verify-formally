@@ -1,0 +1,6 @@
+name = "nomodules"
+defaultTargets = ["Nomodules"]
+
+[[lean_lib]]
+name = "Nomodules"
+roots = []

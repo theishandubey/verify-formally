@@ -1,0 +1,5 @@
+name = "kern"
+defaultTargets = ["Kern"]
+
+[[lean_lib]]
+name = "Kern"

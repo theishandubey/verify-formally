@@ -1,0 +1,5 @@
+name = "empty"
+defaultTargets = ["Empty"]
+
+[[lean_lib]]
+name = "Empty"

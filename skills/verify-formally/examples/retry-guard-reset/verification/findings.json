@@ -1,0 +1,270 @@
+{
+  "schema": "verify-formally-findings/2",
+  "commit": "7cc0dcad4bd2f8a9bdd48121237218153bf847c2",
+  "tree": "clean",
+  "generated_at": "2026-09-25",
+  "invocation": "/verify-formally retry.py",
+  "defaults_taken": [
+    "path-scoped invocation (`/verify-formally retry.py`): modeled only call_with_retry, skipping the Phase B ranking step",
+    "non-interactive: no maintainer available to confirm target selection or answer NEEDS-DECISION questions"
+  ],
+  "baseline": {
+    "test_command": ".venv/bin/python -m pytest -q -p no:cacheprovider",
+    "repro_runner": ".venv/bin/python -m pytest -q -p no:cacheprovider",
+    "collect_command": ".venv/bin/python -m pytest --collect-only -q",
+    "passed": 0,
+    "failed": 0,
+    "skipped": 0,
+    "lint_command": "none (single-file example; no lint config in this repo)",
+    "lint": "not run",
+    "environmental_failures": [],
+    "dirty_files": []
+  },
+  "fewer_targets_reason": "path-scoped invocation names retry-guard directly; ranking and the top-3 default do not apply (this is not a full run)",
+  "targets": [
+    {
+      "id": "retry-guard",
+      "title": "call_with_retry's two-counter retry guard",
+      "files": [
+        "retry.py"
+      ],
+      "tools": [
+        "tla",
+        "lean"
+      ],
+      "status": "modeled",
+      "properties": [
+        {
+          "name": "BoundedAttempts",
+          "kind": "invariant",
+          "statement": "the total number of calls to op() never exceeds max_errors + max_timeouts",
+          "source": "inferred: retry.py names max_errors and max_timeouts as the two caps on repeated failure; a caller reading call_with_retry's signature expects the total attempt count to be bounded by their sum",
+          "tool": "tla",
+          "result": "violated",
+          "runs": [
+            {
+              "cfg": "verification/models/retry-guard/RetryGuard.cfg",
+              "result": "invariant_violation",
+              "constants": {
+                "MaxErrors": "3",
+                "MaxTimeouts": "3",
+                "Fixed": "FALSE",
+                "MutantNoIncrement": "FALSE",
+                "MutantAttemptsStrict": "FALSE"
+              },
+              "distinct_states": 51,
+              "exact_states": false,
+              "json": "verification/models/retry-guard/results/RetryGuard.json"
+            },
+            {
+              "cfg": "verification/models/retry-guard/RetryGuardFixed.cfg",
+              "result": "pass",
+              "constants": {
+                "MaxErrors": "3",
+                "MaxTimeouts": "3",
+                "Fixed": "TRUE",
+                "MutantNoIncrement": "FALSE",
+                "MutantAttemptsStrict": "FALSE"
+              },
+              "distinct_states": 50,
+              "exact_states": true,
+              "json": "verification/models/retry-guard/results/RetryGuardFixed.json"
+            },
+            {
+              "cfg": "verification/models/retry-guard/RetryGuardFixedSmallBudget.cfg",
+              "result": "pass",
+              "constants": {
+                "MaxErrors": "2",
+                "MaxTimeouts": "2",
+                "Fixed": "TRUE",
+                "MutantNoIncrement": "FALSE",
+                "MutantAttemptsStrict": "FALSE"
+              },
+              "distinct_states": 22,
+              "exact_states": true,
+              "json": "verification/models/retry-guard/results/RetryGuardFixedSmallBudget.json"
+            }
+          ],
+          "vacuity": {
+            "status": "passed",
+            "bound_sets": [
+              "MaxErrors=3,MaxTimeouts=3 (MaxAttempts=6, derived)",
+              "MaxErrors=2,MaxTimeouts=2 (MaxAttempts=4, derived)"
+            ],
+            "mutants": [
+              "mutants/RetryGuardFixedMutant.cfg: invariant_violation"
+            ],
+            "sanity": [
+              "sanity/ReachesGaveUp.cfg: invariant_violation",
+              "sanity/ReachesGaveUpFixed.cfg: invariant_violation",
+              "sanity/ReachesGaveUpFixedSmall.cfg: invariant_violation"
+            ]
+          }
+        },
+        {
+          "name": "Termination",
+          "kind": "property",
+          "statement": "call_with_retry always eventually returns or raises, for every sequence of op() outcomes, given weak fairness on the loop's own step",
+          "source": "inferred: a retry helper that declares two per-kind limits (max_errors, max_timeouts) is expected to terminate; nothing in retry.py documents an intentional unbounded retry",
+          "tool": "tla",
+          "result": "violated",
+          "runs": [
+            {
+              "cfg": "verification/models/retry-guard/RetryGuardLiveness.cfg",
+              "result": "property_violation",
+              "constants": {
+                "MaxErrors": "3",
+                "MaxTimeouts": "3",
+                "Fixed": "FALSE",
+                "MutantNoIncrement": "FALSE",
+                "MutantAttemptsStrict": "FALSE"
+              },
+              "distinct_states": 12,
+              "exact_states": false,
+              "json": "verification/models/retry-guard/results/RetryGuardLiveness.json"
+            },
+            {
+              "cfg": "verification/models/retry-guard/RetryGuardFixed.cfg",
+              "result": "pass",
+              "constants": {
+                "MaxErrors": "3",
+                "MaxTimeouts": "3",
+                "Fixed": "TRUE",
+                "MutantNoIncrement": "FALSE",
+                "MutantAttemptsStrict": "FALSE"
+              },
+              "distinct_states": 50,
+              "exact_states": true,
+              "json": "verification/models/retry-guard/results/RetryGuardFixed.json"
+            },
+            {
+              "cfg": "verification/models/retry-guard/RetryGuardFixedSmallBudget.cfg",
+              "result": "pass",
+              "constants": {
+                "MaxErrors": "2",
+                "MaxTimeouts": "2",
+                "Fixed": "TRUE",
+                "MutantNoIncrement": "FALSE",
+                "MutantAttemptsStrict": "FALSE"
+              },
+              "distinct_states": 22,
+              "exact_states": true,
+              "json": "verification/models/retry-guard/results/RetryGuardFixedSmallBudget.json"
+            }
+          ],
+          "vacuity": {
+            "status": "passed",
+            "bound_sets": [
+              "MaxErrors=3,MaxTimeouts=3 (view: ViewNoAttempts)",
+              "MaxErrors=2,MaxTimeouts=2 (view: ViewNoAttempts)"
+            ],
+            "mutants": [
+              "mutants/RetryGuardTerminationMutant.cfg: property_violation"
+            ],
+            "sanity": [
+              "sanity/ReachesGaveUp.cfg: invariant_violation",
+              "sanity/ReachesGaveUpFixed.cfg: invariant_violation",
+              "sanity/ReachesGaveUpFixedSmall.cfg: invariant_violation"
+            ]
+          }
+        },
+        {
+          "name": "fixed_terminates",
+          "kind": "theorem",
+          "statement": "for every Cfg with fixed = true (in particular defaultCfg, maxErrors=3, maxTimeouts=3, maxAttempts = maxErrors + maxTimeouts = 6) and every List Outcome of length >= maxAttempts, running that list from State.init reaches a done state; fixed_terminates_small repeats the same statement for smallCfg (maxErrors=2, maxTimeouts=2, maxAttempts=4)",
+          "source": "fix.patch: attempts >= max_attempts added to the give-up condition, with max_attempts derived from max_errors + max_timeouts when not given",
+          "tool": "lean",
+          "result": "proved",
+          "theorems": [
+            {
+              "name": "RetryGuard.fixed_terminates",
+              "status": "proved"
+            },
+            {
+              "name": "RetryGuard.fixed_terminates_small",
+              "status": "proved"
+            },
+            {
+              "name": "RetryGuard.bounded_termination_from",
+              "status": "proved"
+            },
+            {
+              "name": "RetryGuard.step_not_done_attempts_lt",
+              "status": "proved"
+            },
+            {
+              "name": "RetryGuard.run_sticky",
+              "status": "proved"
+            }
+          ],
+          "scope": "unbounded over List Outcome and over every Cfg with fixed = true (maxAttempts derived as maxErrors + maxTimeouts, not a fixed number), using the errors/timeouts/attempts/status step-function abstraction in CORRESPONDENCE.md",
+          "vacuity": {
+            "status": "passed",
+            "mutants": [
+              "RetryGuard.buggy_not_bounded: proves the same bounded-termination statement is false for buggyCfg (fixed := false), via the concrete alternating witness altList"
+            ],
+            "sanity": [
+              "RetryGuard.buggy_not_bounded's altList witness (length 6, matching buggyCfg.maxAttempts = 3 + 3) is checked by decide to actually reach a non-done state, so the counterexample is not vacuous"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "001",
+      "slug": "alternating-failures-runaway-retry",
+      "title": "Alternating TransientError/TimeoutError resets both retry counters, so call_with_retry never gives up",
+      "status": "CONFIRMED",
+      "severity": "medium",
+      "targets": [
+        "retry-guard"
+      ],
+      "tools": [
+        "tla"
+      ],
+      "properties": [
+        "BoundedAttempts",
+        "Termination"
+      ],
+      "locations": [
+        {
+          "file": "retry.py",
+          "line_start": 12,
+          "line_end": 22
+        }
+      ],
+      "repro_tests": [
+        "verification/repro/repro_retry_guard_reset.py::test_alternating_failures_cause_runaway_retry"
+      ],
+      "repro_command": ".venv/bin/python -m pytest -q -p no:cacheprovider verification/repro/repro_retry_guard_reset.py::test_alternating_failures_cause_runaway_retry",
+      "guard_tests": [
+        "verification/repro/repro_retry_guard_reset.py::test_gives_up_after_max_errors_consecutive_errors"
+      ],
+      "evidence": "AssertionError: BoundedAttempts violated: call_with_retry made 7 calls to op() without giving up, more than max_errors + max_timeouts = 6; alternating TransientError/TimeoutError resets both counters on every call, so neither limit is ever reached",
+      "plan": "001",
+      "fix_check": "observed",
+      "file": "verification/findings/001-alternating-failures-runaway-retry.md"
+    }
+  ],
+  "needs_decision": [],
+  "model_only": [],
+  "rejections": [],
+  "refuted_claims": [],
+  "plans": [
+    {
+      "id": "001",
+      "file": "plans/001-add-attempt-budget.md",
+      "findings": [
+        "001"
+      ]
+    }
+  ],
+  "coverage_gaps": [
+    {
+      "area": "op() raising an exception other than TransientError/TimeoutError",
+      "reason": "such an exception propagates unchanged past call_with_retry (retry.py:14) instead of being caught, so it cannot contribute to the runaway-retry bug; not represented in RetryGuard.tla or RetryGuard/Model.lean"
+    }
+  ]
+}

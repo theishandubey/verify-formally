@@ -1,0 +1,26 @@
+--- a/retry.py
++++ b/retry.py
+@@ -6,10 +6,14 @@
+     pass
+
+
+-def call_with_retry(op, max_errors=3, max_timeouts=3):
++def call_with_retry(op, max_errors=3, max_timeouts=3, max_attempts=None):
++    if max_attempts is None:
++        max_attempts = max_errors + max_timeouts
+     errors = 0
+     timeouts = 0
++    attempts = 0
+     while True:
++        attempts += 1
+         try:
+             return op()
+         except TransientError:
+@@ -18,5 +22,5 @@
+         except TimeoutError:
+             timeouts += 1
+             errors = 0
+-        if errors >= max_errors or timeouts >= max_timeouts:
+-            raise GiveUp(f"gave up after {errors} errors, {timeouts} timeouts")
++        if errors >= max_errors or timeouts >= max_timeouts or attempts >= max_attempts:
++            raise GiveUp(f"gave up after {attempts} attempts ({errors} errors, {timeouts} timeouts)")

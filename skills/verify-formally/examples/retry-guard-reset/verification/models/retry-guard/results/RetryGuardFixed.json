@@ -1,0 +1,31 @@
+{
+  "result": "pass",
+  "violated": null,
+  "states_generated": 89,
+  "distinct_states": 50,
+  "depth": 7,
+  "constants": {
+    "MaxErrors": "3",
+    "MaxTimeouts": "3",
+    "Fixed": "TRUE",
+    "MutantNoIncrement": "FALSE",
+    "MutantAttemptsStrict": "FALSE"
+  },
+  "invariants": [
+    "TypeOK",
+    "BoundedAttempts"
+  ],
+  "properties": [
+    "Termination"
+  ],
+  "check_deadlock": true,
+  "trace": [],
+  "tlc_version": "2.19",
+  "tla2tools_release": "1.7.4",
+  "elapsed_seconds": 0.153,
+  "raw_log": "verification/models/retry-guard/results/RetryGuardFixed.log",
+  "exit_code": 0,
+  "spec": "verification/models/retry-guard/RetryGuard.tla",
+  "cfg": "verification/models/retry-guard/RetryGuardFixed.cfg",
+  "command": "scripts/run_tlc.sh verification/models/retry-guard/RetryGuard.tla verification/models/retry-guard/RetryGuardFixed.cfg --out verification/models/retry-guard/results/RetryGuardFixed.json --workers 1 --quiet"
+}

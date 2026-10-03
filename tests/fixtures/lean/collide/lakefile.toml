@@ -1,0 +1,6 @@
+name = "collide"
+defaultTargets = ["Foo"]
+
+[[lean_lib]]
+name = "Foo"
+srcDir = "src"

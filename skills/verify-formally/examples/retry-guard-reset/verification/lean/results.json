@@ -1,0 +1,135 @@
+{
+  "result": "proved",
+  "theorems": [
+    {
+      "name": "RetryGuard.State.done._sparseCasesOn_1.else_eq",
+      "internal_name": "RetryGuard.State.done._sparseCasesOn_1.else_eq",
+      "module": "RetryGuard.Model",
+      "line": 0,
+      "status": "proved",
+      "axioms": [
+        "propext"
+      ]
+    },
+    {
+      "name": "RetryGuard.bounded_termination_from._proof_1_6",
+      "internal_name": "RetryGuard.bounded_termination_from._proof_1_6",
+      "module": "RetryGuard.Model",
+      "line": 0,
+      "status": "proved",
+      "axioms": [
+        "propext",
+        "Quot.sound"
+      ]
+    },
+    {
+      "name": "RetryGuard.buggy_not_bounded",
+      "internal_name": "RetryGuard.buggy_not_bounded",
+      "module": "RetryGuard.Model",
+      "line": 157,
+      "status": "proved",
+      "axioms": [
+        "propext"
+      ]
+    },
+    {
+      "name": "RetryGuard.run_sticky",
+      "internal_name": "RetryGuard.run_sticky",
+      "module": "RetryGuard.Model",
+      "line": 66,
+      "status": "proved",
+      "axioms": [
+        "propext"
+      ]
+    },
+    {
+      "name": "RetryGuard.step_not_done_attempts_lt",
+      "internal_name": "RetryGuard.step_not_done_attempts_lt",
+      "module": "RetryGuard.Model",
+      "line": 78,
+      "status": "proved",
+      "axioms": [
+        "propext",
+        "Quot.sound"
+      ]
+    },
+    {
+      "name": "RetryGuard.bounded_termination_from._proof_1_4",
+      "internal_name": "RetryGuard.bounded_termination_from._proof_1_4",
+      "module": "RetryGuard.Model",
+      "line": 0,
+      "status": "proved",
+      "axioms": [
+        "propext",
+        "Quot.sound"
+      ]
+    },
+    {
+      "name": "RetryGuard.fixed_terminates_small",
+      "internal_name": "RetryGuard.fixed_terminates_small",
+      "module": "RetryGuard.Model",
+      "line": 146,
+      "status": "proved",
+      "axioms": [
+        "propext",
+        "Quot.sound"
+      ]
+    },
+    {
+      "name": "RetryGuard.bounded_termination_from",
+      "internal_name": "RetryGuard.bounded_termination_from",
+      "module": "RetryGuard.Model",
+      "line": 102,
+      "status": "proved",
+      "axioms": [
+        "propext",
+        "Quot.sound"
+      ]
+    },
+    {
+      "name": "RetryGuard.fixed_terminates",
+      "internal_name": "RetryGuard.fixed_terminates",
+      "module": "RetryGuard.Model",
+      "line": 139,
+      "status": "proved",
+      "axioms": [
+        "propext",
+        "Quot.sound"
+      ]
+    },
+    {
+      "name": "RetryGuard.Outcome.ofNat_ctorIdx",
+      "internal_name": "RetryGuard.Outcome.ofNat_ctorIdx",
+      "module": "RetryGuard.Model",
+      "line": 0,
+      "status": "proved",
+      "axioms": []
+    },
+    {
+      "name": "RetryGuard.Status.ofNat_ctorIdx",
+      "internal_name": "RetryGuard.Status.ofNat_ctorIdx",
+      "module": "RetryGuard.Model",
+      "line": 0,
+      "status": "proved",
+      "axioms": []
+    }
+  ],
+  "user_theorems": [
+    "RetryGuard.buggy_not_bounded",
+    "RetryGuard.run_sticky",
+    "RetryGuard.step_not_done_attempts_lt",
+    "RetryGuard.fixed_terminates_small",
+    "RetryGuard.bounded_termination_from",
+    "RetryGuard.fixed_terminates"
+  ],
+  "forbidden_hits": [],
+  "lean_version": "4.34.0",
+  "kernel_check": {
+    "ok": true,
+    "modules_checked": [
+      "RetryGuard",
+      "RetryGuard.Model"
+    ],
+    "detail": null
+  }
+}

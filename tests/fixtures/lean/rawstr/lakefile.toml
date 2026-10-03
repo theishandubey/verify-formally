@@ -1,0 +1,5 @@
+name = "rawstr"
+defaultTargets = ["Rawstr"]
+
+[[lean_lib]]
+name = "Rawstr"

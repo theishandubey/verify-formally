@@ -1,0 +1,10 @@
+name = "dotmix"
+defaultTargets = ["Foo", "Root"]
+
+[[lean_lib]]
+name = "Foo"
+srcDir = "src"
+
+[[lean_lib]]
+name = "Root"
+srcDir = "."

@@ -1,0 +1,5 @@
+name = "injhide"
+defaultTargets = ["Injhide"]
+
+[[lean_lib]]
+name = "Injhide"

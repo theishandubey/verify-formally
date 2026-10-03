@@ -1,0 +1,71 @@
+{
+  "result": "property_violation",
+  "violated": "Termination",
+  "states_generated": 23,
+  "distinct_states": 12,
+  "depth": 4,
+  "constants": {
+    "MaxErrors": "3",
+    "MaxTimeouts": "3",
+    "Fixed": "FALSE",
+    "MutantNoIncrement": "FALSE",
+    "MutantAttemptsStrict": "FALSE"
+  },
+  "invariants": [],
+  "properties": [
+    "Termination"
+  ],
+  "check_deadlock": true,
+  "trace": [
+    {
+      "index": 1,
+      "action": "<Initial predicate>",
+      "vars": {
+        "errors": "0",
+        "attempts": "0",
+        "status": "\"running\"",
+        "timeouts": "0"
+      }
+    },
+    {
+      "index": 2,
+      "action": "<TransientStep line 41, col 3 to line 48, col 73 of module RetryGuard>",
+      "vars": {
+        "errors": "1",
+        "attempts": "1",
+        "status": "\"running\"",
+        "timeouts": "0"
+      }
+    },
+    {
+      "index": 3,
+      "action": "<TransientStep line 41, col 3 to line 48, col 73 of module RetryGuard>",
+      "vars": {
+        "errors": "2",
+        "attempts": "2",
+        "status": "\"running\"",
+        "timeouts": "0"
+      }
+    },
+    {
+      "index": 4,
+      "action": "<TimeoutStep line 51, col 3 to line 58, col 73 of module RetryGuard>",
+      "vars": {
+        "errors": "0",
+        "attempts": "3",
+        "status": "\"running\"",
+        "timeouts": "1"
+      }
+    }
+  ],
+  "tlc_version": "2.19",
+  "tla2tools_release": "1.7.4",
+  "elapsed_seconds": 0.149,
+  "raw_log": "verification/models/retry-guard/results/RetryGuardLiveness.log",
+  "exit_code": 13,
+  "spec": "verification/models/retry-guard/RetryGuard.tla",
+  "cfg": "verification/models/retry-guard/RetryGuardLiveness.cfg",
+  "command": "scripts/run_tlc.sh verification/models/retry-guard/RetryGuard.tla verification/models/retry-guard/RetryGuardLiveness.cfg --out verification/models/retry-guard/results/RetryGuardLiveness.json --workers 1 --quiet",
+  "loop_to": 2,
+  "error_detail": "Temporal properties were violated."
+}

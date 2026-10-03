@@ -1,0 +1,5 @@
+name = "with_axiom"
+defaultTargets = ["WithAxiom"]
+
+[[lean_lib]]
+name = "WithAxiom"

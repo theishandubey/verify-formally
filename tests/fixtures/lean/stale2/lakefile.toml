@@ -1,0 +1,5 @@
+name = "stale2"
+defaultTargets = ["S2"]
+
+[[lean_lib]]
+name = "S2"

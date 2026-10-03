@@ -1,0 +1,6 @@
+name = "srcdir"
+defaultTargets = ["Foo"]
+
+[[lean_lib]]
+name = "Foo"
+srcDir = "src"

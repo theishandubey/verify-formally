@@ -1,0 +1,5 @@
+name = "mut"
+defaultTargets = ["Mut"]
+
+[[lean_lib]]
+name = "Mut"

@@ -1,0 +1,5 @@
+name = "retry_guard"
+defaultTargets = ["RetryGuard"]
+
+[[lean_lib]]
+name = "RetryGuard"

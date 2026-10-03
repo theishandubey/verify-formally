@@ -1,0 +1,6 @@
+name = "rts"
+defaultTargets = ["Rts"]
+
+[[lean_lib]]
+name = "Rts"
+roots = ["Rts", "Lemmas"]

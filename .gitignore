@@ -1,0 +1,11 @@
+workbench/
+.venv/
+__pycache__/
+.pytest_cache/
+.lake/
+states/
+*.out
+.DS_Store
+evals/
+.claude/
+lake-manifest.json

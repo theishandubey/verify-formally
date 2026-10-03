@@ -1,0 +1,3 @@
+---- MODULE ExtendsBase ----
+CONSTANT MaxVal
+====

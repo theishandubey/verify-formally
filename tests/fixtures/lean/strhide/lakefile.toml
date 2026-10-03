@@ -1,0 +1,5 @@
+name = "strhide"
+defaultTargets = ["Strhide"]
+
+[[lean_lib]]
+name = "Strhide"
