@@ -33,6 +33,36 @@ if [ ! -f "$good/verification/findings.json" ]; then
   exit 1
 fi
 
+if ! "$python3_bin" - "$good" <<'PYEOF'
+import json, os, subprocess, sys
+
+good = sys.argv[1]
+problems = []
+for rel, want in (
+    ("verification/models/retry-budget/results/RetryBudget", "error"),
+    ("verification/models/shutdown-drain/results/ShutdownDrain", "pass"),
+):
+    try:
+        got = json.load(open(os.path.join(good, rel + ".json"))).get("result")
+    except (OSError, ValueError) as e:
+        got = "unreadable (%s)" % e
+    if got != want:
+        problems.append("%s.json result is %r, expected %r" % (rel, got, want))
+    if not os.path.isfile(os.path.join(good, rel + ".log")):
+        problems.append("%s.log is missing" % rel)
+venv_python = os.path.join(good, ".venv", "bin", "python")
+rc = subprocess.run([venv_python, "-c", "import pytest"], capture_output=True).returncode
+if rc != 0:
+    problems.append("%s cannot import pytest (exit %s)" % (venv_python, rc))
+for problem in problems:
+    print("  " + problem)
+sys.exit(1 if problems else 0)
+PYEOF
+then
+  echo "FAIL: fixture guard (F0): the attempt targets or the .venv symlink are not as the cases assume"
+  exit 1
+fi
+
 pass_count=0
 fail_count=0
 
@@ -56,8 +86,9 @@ run_checker() {
 
 check_case() {
   local name="$1" dir="$2" expected_exit="$3" expected_check="$4" expected_substring="${5:-}"
+  shift $(( $# < 5 ? $# : 5 ))
   local out ec
-  out="$(run_checker "$dir" 2>&1)"
+  out="$(run_checker "$dir" "$@" 2>&1)"
   ec=$?
   if [ "$ec" != "$expected_exit" ]; then
     fail "$name (expected exit=$expected_exit, got exit=$ec)"
@@ -65,19 +96,62 @@ check_case() {
     return
   fi
   if [ -n "$expected_check" ]; then
-    local line
-    line="$(printf '%s\n' "$out" | grep "\[ERROR\] $expected_check:" | head -1)"
-    if [ -z "$line" ]; then
+    local lines
+    lines="$(printf '%s\n' "$out" | grep "^\[ERROR\] $expected_check: " || true)"
+    if [ -z "$lines" ]; then
       fail "$name (expected an [ERROR] $expected_check line, none found)"
       echo "$out" | sed 's/^/    /'
       return
     fi
-    if [ -n "$expected_substring" ] && ! printf '%s' "$line" | grep -qF "$expected_substring"; then
-      fail "$name (expected [ERROR] $expected_check line to contain '$expected_substring')"
-      echo "$line" | sed 's/^/    /'
+    if [ -n "$expected_substring" ] && ! grep -qF -- "$expected_substring" <<<"$lines"; then
+      fail "$name (expected an [ERROR] $expected_check line to contain '$expected_substring')"
+      echo "$lines" | sed 's/^/    /'
       return
     fi
   fi
+  pass "$name"
+}
+
+check_lines() {
+  local name="$1" dir="$2" expected_exit="$3" checker_args="$4"
+  shift 4
+  local out ec
+  out="$(run_checker "$dir" $checker_args 2>&1)"
+  ec=$?
+  if [ "$ec" != "$expected_exit" ]; then
+    fail "$name (expected exit=$expected_exit, got exit=$ec)"
+    echo "$out" | sed 's/^/    /'
+    return
+  fi
+  local expect negate rest level check substring lines
+  for expect in "$@"; do
+    negate=0
+    if [ "${expect#!}" != "$expect" ]; then
+      negate=1
+      expect="${expect#!}"
+    fi
+    level="${expect%%|*}"
+    rest="${expect#*|}"
+    check="${rest%%|*}"
+    substring="${rest#*|}"
+    lines="$(printf '%s\n' "$out" | grep "^\[$level\] $check" || true)"
+    if [ -n "$check" ]; then
+      lines="$(printf '%s\n' "$lines" | grep "^\[$level\] $check: " || true)"
+    fi
+    if [ -n "$substring" ] && [ -n "$lines" ]; then
+      lines="$(printf '%s\n' "$lines" | grep -F -- "$substring" || true)"
+    fi
+    if [ "$negate" = "1" ] && [ -n "$lines" ]; then
+      fail "$name (expected no [$level] $check line containing '$substring', found one)"
+      echo "$lines" | sed 's/^/    /'
+      return
+    fi
+    if [ "$negate" = "0" ] && [ -z "$lines" ]; then
+      fail "$name (expected a [$level] $check line containing '$substring', none found)"
+      echo "$out" | sed 's/^/    /'
+      return
+    fi
+  done
   pass "$name"
 }
 
@@ -90,7 +164,18 @@ PYEOF
 }
 
 echo "== good run =="
-check_case "good-run-exits-0" "$good" "0" ""
+good_out="$(run_checker "$good" 2>&1)"
+good_ec=$?
+good_errors="$(printf '%s\n' "$good_out" | grep -c '^\[ERROR\] ' || true)"
+good_warnings="$(printf '%s\n' "$good_out" | grep '^\[WARNING\] ' || true)"
+if [ "$good_ec" = "0" ] && [ "$good_errors" = "0" ] \
+  && [ "$(printf '%s\n' "$good_warnings" | grep -c .)" = "1" ] \
+  && printf '%s' "$good_warnings" | grep -qF "[WARNING] C04: only 1 modeled target(s)"; then
+  pass "good-run-exits-0"
+else
+  fail "good-run-exits-0 (expected exit 0, no [ERROR], exactly one [WARNING] C04: only 1 modeled target(s); got exit=$good_ec)"
+  echo "$good_out" | sed 's/^/    /'
+fi
 
 echo "== --json produces valid JSON =="
 json_out="$("$python3_bin" "$check_run" "$good" --json)"
@@ -109,7 +194,8 @@ if [ "$ec" = "2" ]; then pass "missing-repo-root-exits-2"; else fail "missing-re
 echo "== --no-exec warns instead of skipping silently =="
 noexec_out="$("$python3_bin" "$check_run" "$good" --no-exec 2>&1)"
 noexec_ec=$?
-if [ "$noexec_ec" = "0" ] && printf '%s' "$noexec_out" | grep -q "\[WARNING\] C10: --no-exec"; then
+if [ "$noexec_ec" = "0" ] && printf '%s' "$noexec_out" | grep -q "\[WARNING\] C10: --no-exec" \
+  && printf '%s' "$noexec_out" | grep -qF "[WARNING] C16: --no-exec was given; C16 did not re-run the 5 cited"; then
   pass "no-exec-warns"
 else
   fail "no-exec-warns (exit=$noexec_ec)"
@@ -160,7 +246,7 @@ data = json.load(open(path))
 data["fewer_targets_reason"] = ""
 json.dump(data, open(path, "w"), indent=2)
 '
-check_case "too-few-targets-without-reason-caught" "$dir" "1" "C04"
+check_case "too-few-targets-without-reason-caught" "$dir" "1" "C04" "fewer_targets_reason is empty"
 
 # vacuity mutant with the same cfg as the buggy run (re-running the buggy config)
 dir="$(make_copy mutant-equals-buggy-config)"
@@ -369,7 +455,7 @@ data = json.load(open(path))
 data["baseline"]["collect_command"] = "/no/such/interpreter -m pytest --collect-only -q"
 json.dump(data, open(path, "w"), indent=2)
 '
-check_case "m1-collect-command-broken-caught" "$dir" "1" "C11" "expected 0, or 5"
+check_case "m1-collect-command-broken-caught" "$dir" "1" "C11" "command not found"
 
 echo "== M2: staleness applies to mutant/sanity result JSONs too =="
 dir="$(make_copy m2-mutant-result-stale)"
@@ -623,6 +709,826 @@ text = text.replace(
 open(path, "w").write(text)
 '
 check_case "r2m5-repro-message-omits-property-name-caught" "$dir" "1" "C10" "does not name any of"
+
+echo "== hardening: invocation classification =="
+class_out="$("$python3_bin" - "$scripts_dir" "$work/classify-repo" <<'PYEOF'
+import os, sys
+
+sys.path.insert(0, sys.argv[1])
+import check_run
+
+repo = sys.argv[2]
+os.makedirs(os.path.join(repo, "demo"))
+os.makedirs(os.path.join(repo, "src"))
+with open(os.path.join(repo, "demo", "worker.py"), "w") as f:
+    f.write("def drain(queue):\n    return queue\n")
+with open(os.path.join(repo, "demo", "reconcile.py"), "w") as f:
+    f.write("def noop():\n    return 0\n")
+os.makedirs(os.path.join(repo, "ts"))
+with open(os.path.join(repo, "ts", "svc.ts"), "w") as f:
+    f.write("export const tsConst = () => {}\nconst tsAsync = async () => {}\n")
+    f.write("class Svc {\n  async tsMethod() {\n  }\n  tsTyped(): void {\n  }\n}\n")
+with open(os.path.join(repo, "ts", "Svc.java"), "w") as f:
+    f.write("class Svc {\n  public void javaMethod() {\n  }\n}\n")
+with open(os.path.join(repo, "ts", "calls.ts"), "w") as f:
+    f.write("callOnly();\nif (callOnly()) {\n}\nif callOnly() {\n}\nwhile callOnly:\n")
+    f.write("return callOnly;\nx = callOnly(1)\nlet y = callOnly\n")
+with open(os.path.join(repo, "retry.py"), "w") as f:
+    f.write("def fn():\n    return 1\n")
+with open(os.path.join(repo, "src", "worker.py"), "w") as f:
+    f.write("def run():\n    return 2\n")
+targets = [{"files": [
+    "demo/worker.py", "demo/reconcile.py", "retry.py", "src/worker.py", "ts/svc.ts",
+    "ts/Svc.java", "ts/calls.ts",
+]}]
+
+rows = [
+    ("/verify-formally", True, False),
+    ("/verify-formally (default mode, non-interactive)", True, False),
+    ("/verify-formally (non-interactive).", True, False),
+    ("/verify-formally --non-interactive", True, False),
+    ("/verify-formally please check the retry logic", True, False),
+    ("/verify-formally run_loop", True, False),
+    ("/verify-formally demo/worker.py", False, False),
+    ("/verify-formally retry.py", False, False),
+    ("/verify-formally lean demo/worker.py", False, False),
+    ("/verify-formally Worker.drain", False, False),
+    ("/verify-formally pkg::fn", False, False),
+    ("/verify-formally src\\worker.py", False, False),
+    ("/verify-formally quick", False, False),
+    ("/verify-formally reconcile", False, True),
+    ("/verify-formally RECONCILE demo/worker.py", False, True),
+    ("/verify-formally demo/reconcile.py", False, False),
+    ("/verify-formally see README.md", True, False),
+    ("/verify-formally on the node.js service", True, False),
+    ("/verify-formally full run, e.g. the worker", True, False),
+    ("/verify-formally i.e. take the defaults", True, False),
+    ("/verify-formally and/or the defaults", True, False),
+    ("/verify-formally (non-interactive, the job.queue)", True, False),
+    ("/verify-formally svc.tsConst", False, False),
+    ("/verify-formally svc.tsAsync", False, False),
+    ("/verify-formally Svc.tsMethod", False, False),
+    ("/verify-formally Svc.tsTyped", False, False),
+    ("/verify-formally Svc.javaMethod", False, False),
+    ("/verify-formally svc.callOnly", True, False),
+    ("/verify-formally demo/worker.py:12", False, False),
+    ("", False, False),
+    ("   ", False, False),
+    (None, False, False),
+    (["/verify-formally"], False, False),
+]
+bad = []
+for inv, want_full, want_reconcile in rows:
+    got = (check_run.is_full_run(inv, repo, targets), check_run.is_reconcile_run(inv))
+    if got != (want_full, want_reconcile):
+        bad.append("%r: got (full, reconcile)=%r, expected %r" % (inv, got, (want_full, want_reconcile)))
+for line in bad:
+    print(line)
+sys.exit(1 if bad else 0)
+PYEOF
+)"
+if [ $? -eq 0 ]; then
+  pass "invocation-classification"
+else
+  fail "invocation-classification"
+  echo "$class_out" | sed 's/^/    /'
+fi
+
+echo "== hardening: C01 raw structure is checked before any repair =="
+dir="$(make_copy p8-schema-id-rejected-and-continues)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["schema"] = "x-verification-1.0"
+data["fewer_targets_reason"] = ""
+json.dump(data, open(path, "w"), indent=2)
+'
+check_lines "p8-schema-id-rejected-and-continues" "$dir" "1" "" \
+  "ERROR|C01|not 'verify-formally-findings/2'" \
+  "ERROR|C04|fewer_targets_reason is empty"
+
+dir="$(make_copy p9-missing-targets-rejected)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+del data["targets"]
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "p9-missing-targets-rejected" "$dir" "1" "C01" "missing 'targets'"
+
+dir="$(make_copy p9b-targets-wrong-type-rejected)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["targets"] = {}
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "p9b-targets-wrong-type-rejected" "$dir" "1" "C01" "'targets' must be a list"
+
+dir="$(make_copy p9c-top-level-not-object-rejected)"
+printf '[]\n' > "$dir/verification/findings.json"
+check_case "p9c-top-level-not-object-rejected" "$dir" "1" "C01" "top-level value must be a JSON object"
+
+echo "== hardening: FIXED only in a reconcile run, and field names are not repaired =="
+dir="$(make_copy p12-fixed-outside-reconcile-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["findings"][0]["status"] = "FIXED"
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "p12-fixed-outside-reconcile-caught" "$dir" "1" "C01" "not a reconcile run" --no-exec
+
+dir="$(make_copy p12b-fixed-in-reconcile-ok)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["findings"][0]["status"] = "FIXED"
+data["invocation"] = "/verify-formally reconcile"
+json.dump(data, open(path, "w"), indent=2)
+'
+check_lines "p12b-fixed-in-reconcile-ok" "$dir" "0" "--no-exec" "!ERROR|C01|"
+
+dir="$(make_copy p13-singular-field-rejected)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+fi = data["findings"][0]
+fi["repro_test"] = fi.pop("repro_tests")[0]
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "p13-singular-field-rejected" "$dir" "1" "C01" "documented field is" --no-exec
+
+echo "== hardening: C04 selection, attempts, and unlisted work =="
+dir="$(make_copy p5-zero-modeled-with-reason-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["targets"][0]["status"] = "not_modeled"
+data["targets"][0]["reason"] = "budget"
+json.dump(data, open(path, "w"), indent=2)
+'
+check_lines "p5-zero-modeled-with-reason-caught" "$dir" "1" "--no-exec" \
+  "ERROR|C04|has no modeled target" \
+  "!ERROR|C04|no attempt on disk"
+
+dir="$(make_copy p6-fewer-than-three-selected-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+del data["targets"][2]
+json.dump(data, open(path, "w"), indent=2)
+'
+check_lines "p6-fewer-than-three-selected-caught" "$dir" "1" "--no-exec" \
+  "ERROR|C04|lists only 2 selected target(s)" \
+  "WARNING|C04|verification/models/shutdown-drain exists but is not listed"
+
+dir="$(make_copy c04-attempt-without-reason-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["targets"][1]["reason"] = ""
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "c04-attempt-without-reason-caught" "$dir" "1" "C04" \
+  "target retry-budget is not_modeled without a reason" --no-exec
+
+dir="$(make_copy p7a-attempt-without-results-caught)"
+rm -rf "$dir/verification/models/retry-budget/results"
+check_case "p7a-attempt-without-results-caught" "$dir" "1" "C04" \
+  "target retry-budget is not_modeled but has no attempt on disk" --no-exec
+
+dir="$(make_copy p7b-attempt-without-spec-caught)"
+rm "$dir/verification/models/shutdown-drain/ShutdownDrain.tla"
+check_case "p7b-attempt-without-spec-caught" "$dir" "1" "C04" \
+  "target shutdown-drain is not_modeled but has no attempt on disk" --no-exec
+
+dir="$(make_copy c04-unlisted-dir-warns)"
+mkdir -p "$dir/verification/models/cost-accounting"
+touch "$dir/verification/models/cost-accounting/notes.md"
+check_lines "c04-unlisted-dir-warns" "$dir" "0" "--no-exec" \
+  "WARNING|C04|verification/models/cost-accounting exists but is not listed in targets[]"
+
+dir="$(make_copy p10-free-text-invocation-is-full-run)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["invocation"] = "/verify-formally (default mode, non-interactive)"
+data["targets"] = []
+data["fewer_targets_reason"] = "scope"
+json.dump(data, open(path, "w"), indent=2)
+'
+check_lines "p10-free-text-invocation-is-full-run" "$dir" "1" "--no-exec" \
+  "ERROR|C04|lists only 0 selected" \
+  "ERROR|C04|has no modeled target"
+
+dir="$(make_copy p10b-path-invocation-is-scoped)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["invocation"] = "/verify-formally demo/worker.py"
+data["targets"] = [data["targets"][0]]
+data["fewer_targets_reason"] = ""
+json.dump(data, open(path, "w"), indent=2)
+'
+check_lines "p10b-path-invocation-is-scoped" "$dir" "0" "--no-exec" \
+  "!ERROR|C04|" \
+  "!WARNING|C04|"
+
+echo "== hardening: C10/C11 find the interpreter in <repo>/.venv/bin =="
+if command -v python >/dev/null 2>&1 && python -c 'import pytest' >/dev/null 2>&1; then
+  echo "NOTE: ambient python has pytest; p11 is not discriminating here"
+fi
+dir="$(make_copy p11-venv-on-path)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+old_runner = data["baseline"]["repro_runner"]
+new_runner = "PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider"
+data["baseline"]["repro_runner"] = new_runner
+data["baseline"]["collect_command"] = "python -m pytest --collect-only -q"
+fi = data["findings"][0]
+fi["repro_command"] = fi["repro_command"].replace(old_runner, new_runner)
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "p11-venv-on-path" "$dir" "0" ""
+
+dir="$(make_copy c10-runner-exit-127-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+old_runner = data["baseline"]["repro_runner"]
+new_runner = "/no/such/interpreter -m pytest -q"
+data["baseline"]["repro_runner"] = new_runner
+fi = data["findings"][0]
+fi["repro_command"] = fi["repro_command"].replace(old_runner, new_runner)
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "c10-runner-exit-127-caught" "$dir" "1" "C10" "exit 127, command not found"
+
+echo "== hardening: C16 result provenance =="
+dir="$(make_copy p1-handwritten-sanity-json-caught)"
+mutate "$dir" '
+import json, os, sys
+d = sys.argv[1]
+results = d + "/verification/models/job-drain/results"
+handwritten = {
+    "result": "invariant_violation",
+    "violated": "SanityAlwaysDraining",
+    "states_generated": 12,
+    "distinct_states": 12,
+    "depth": 4,
+    "constants": {"StopAfter": "3", "Fixed": "FALSE", "MutantNoRelease": "FALSE"},
+    "invariants": [],
+    "properties": [],
+    "check_deadlock": True,
+    "trace": [],
+    "tlc_version": "2.19",
+    "raw_log": "sanity check: reachability",
+    "exit_code": 0,
+    "spec": d + "/verification/models/job-drain/JobDrain.tla",
+    "cfg": "sanity: SanityAlwaysDraining",
+    "command": "sanity check - verifies reachability",
+}
+json.dump(handwritten, open(results + "/SanityAlwaysDraining.json", "w"))
+os.remove(results + "/SanityAlwaysDraining.log")
+'
+check_case "p1-handwritten-sanity-json-caught" "$dir" "1" "C16" \
+  "SanityAlwaysDraining.json: result JSON was not produced by run_tlc.sh" --no-exec
+
+dir="$(make_copy p2-result-log-deleted-caught)"
+rm "$dir/verification/models/job-drain/results/SpecFixed.log"
+check_case "p2-result-log-deleted-caught" "$dir" "1" "C16" \
+  "SpecFixed.json: no raw TLC log" --no-exec
+
+dir="$(make_copy p2b-result-copied-into-attempt-caught)"
+cp -p "$dir/verification/models/job-drain/results/SpecFixed.json" \
+  "$dir/verification/models/retry-budget/results/Copied.json"
+cp -p "$dir/verification/models/job-drain/results/SpecFixed.log" \
+  "$dir/verification/models/retry-budget/results/Copied.log"
+check_lines "p2b-result-copied-into-attempt-caught" "$dir" "1" "--no-exec" \
+  "ERROR|C16|Copied.json: result JSON's spec" \
+  "ERROR|C16|does not resolve to a file under"
+
+dir="$(make_copy p3-edited-json-mismatches-log-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/models/job-drain/results/SpecFixed.json"
+data = json.load(open(path))
+data["distinct_states"] = 6
+json.dump(data, open(path, "w"))
+'
+check_case "p3-edited-json-mismatches-log-caught" "$dir" "1" "C16" \
+  "does not match its own TLC log (json distinct_states=6" --no-exec
+
+dir="$(make_copy p4-forged-log-caught-by-rerun)"
+mutate "$dir" '
+import json, re, sys
+d = sys.argv[1]
+results = d + "/verification/models/job-drain/results"
+data = json.load(open(results + "/SpecFixed.json"))
+data["distinct_states"] = 6
+json.dump(data, open(results + "/SpecFixed.json", "w"))
+text = open(results + "/SpecFixed.log").read()
+text, n = re.subn(r"\b5 distinct states found", "6 distinct states found", text)
+assert n > 0
+open(results + "/SpecFixed.log", "w").write(text)
+path = d + "/verification/findings.json"
+findings = json.load(open(path))
+findings["targets"][0]["properties"][0]["runs"][1]["distinct_states"] = 6
+json.dump(findings, open(path, "w"), indent=2)
+'
+check_lines "p4-forged-log-caught-by-rerun" "$dir" "1" "" \
+  "ERROR|C16|gives distinct_states=5, stored 6" \
+  "!ERROR|C16|does not match its own TLC log"
+
+dir="$(make_copy p4b-spec-edited-mtime-restored-caught-by-rerun)"
+mutate "$dir" '
+import os, sys
+p = sys.argv[1] + "/verification/models/job-drain/JobDrain.tla"
+st = os.stat(p)
+text = open(p).read()
+old = "ELSE IF Fixed THEN outstanding"
+assert old in text
+open(p, "w").write(text.replace(old, "ELSE IF Fixed THEN 0"))
+os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))
+'
+check_lines "p4b-spec-edited-mtime-restored-caught-by-rerun" "$dir" "1" "" \
+  "ERROR|C16|SpecFixed.cfg gives result='invariant_violation', stored 'pass'" \
+  "!ERROR|C06|stale"
+
+echo "== hardening: C16 reports a missing toolchain once, and --no-exec does not need it =="
+dir="$(make_copy c16-failed-to-start)"
+nohome="$work/nohome"
+mkdir -p "$nohome"
+if HOME="$nohome" TLA2TOOLS_JAR="$work/missing.jar" "$scripts_dir/run_tlc.sh" \
+  "$dir/verification/models/job-drain/JobDrain.tla" \
+  "$dir/verification/models/job-drain/Spec.cfg" >/dev/null 2>&1; then
+  precondition_ec=0
+else
+  precondition_ec=$?
+fi
+if [ "$precondition_ec" != "2" ]; then
+  echo "SKIP: c16-failed-to-start (a tla2tools jar is reachable outside HOME)"
+else
+  start_out="$(HOME="$nohome" TLA2TOOLS_JAR="$work/missing.jar" run_checker "$dir" 2>&1)"
+  start_ec=$?
+  start_count="$(printf '%s\n' "$start_out" | grep -c 'C16: cannot re-verify TLC results: run_tlc.sh failed to start' || true)"
+  start_noexec_out="$(HOME="$nohome" TLA2TOOLS_JAR="$work/missing.jar" run_checker "$dir" --no-exec 2>&1)"
+  start_noexec_ec=$?
+  if [ "$start_ec" = "1" ] && [ "$start_count" = "1" ] && [ "$start_noexec_ec" = "0" ]; then
+    pass "c16-failed-to-start"
+  else
+    fail "c16-failed-to-start (exit=$start_ec, C16 start-failure lines=$start_count, --no-exec exit=$start_noexec_ec; expected 1, 1, 0)"
+    echo "$start_out" | sed 's/^/    /'
+    echo "$start_noexec_out" | sed 's/^/    /'
+  fi
+fi
+
+echo "== review round 4: C04 applies to every run except reconcile =="
+dir="$(make_copy r4-scoped-nothing-modeled-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["invocation"] = "/verify-formally demo/worker.py"
+data["targets"] = []
+data["findings"] = []
+data["fewer_targets_reason"] = ""
+json.dump(data, open(path, "w"), indent=2)
+'
+check_lines "r4-scoped-nothing-modeled-caught" "$dir" "1" "--no-exec" \
+  "ERROR|C04|a scoped run" \
+  "ERROR|C04|no modeled target's files cover it" \
+  "!ERROR|C04|write the invocation"
+
+dir="$(make_copy r4-quick-with-not-modeled-target-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["invocation"] = "/verify-formally quick"
+data["targets"] = [data["targets"][1]]
+data["findings"] = []
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "r4-quick-with-not-modeled-target-caught" "$dir" "1" "C04" "a scoped run" --no-exec
+
+dir="$(make_copy r4-scoped-path-not-in-targets-caught)"
+printf 'x = 1\n' > "$dir/demo/other.py"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["invocation"] = "/verify-formally demo/other.py"
+data["targets"] = [data["targets"][0]]
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "r4-scoped-path-not-in-targets-caught" "$dir" "1" "C04" \
+  "names demo/other.py but no modeled target's files cover it" --no-exec
+
+dir="$(make_copy r4-lean-only-unproved-target-not-modeled-caught)"
+mutate "$dir" '
+import json, os, sys
+d = sys.argv[1]
+path = d + "/verification/findings.json"
+data = json.load(open(path))
+data["targets"][0]["status"] = "not_modeled"
+data["targets"][0]["reason"] = "ran out of budget"
+data["findings"] = []
+os.makedirs(d + "/verification/models/fake")
+with open(d + "/verification/models/fake/CORRESPONDENCE.md", "w") as f:
+    for i in range(25):
+        f.write("- var x%d maps to demo/worker.py:%d\n" % (i, i + 1))
+data["targets"].append({
+    "id": "fake", "title": "t", "files": ["demo/worker.py"], "tools": ["lean"],
+    "status": "modeled",
+    "properties": [{"name": "P", "statement": "s", "source": "inferred", "tool": "lean",
+                    "result": "unproved"}],
+})
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "r4-lean-only-unproved-target-not-modeled-caught" "$dir" "1" "C04" \
+  "has no modeled target" --no-exec
+
+dir="$(make_copy r4-dotted-word-invocation-is-full-run)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["invocation"] = "/verify-formally on the node.js service, e.g. the worker"
+data["targets"] = [data["targets"][0]]
+data["fewer_targets_reason"] = ""
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "r4-dotted-word-invocation-is-full-run" "$dir" "1" "C04" \
+  "lists only 1 selected target(s)" --no-exec
+
+dir="$(make_copy r4-lean-attempt-accepted)"
+rm -rf "$dir/verification/models/retry-budget"
+printf 'theorem retry_budget_attempt : True := trivial\n' > "$dir/verification/lean/RetryBudget.lean"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["targets"][1]["tools"] = ["lean"]
+json.dump(data, open(path, "w"), indent=2)
+'
+check_lines "r4-lean-attempt-accepted" "$dir" "0" "--no-exec" "!ERROR|C04|"
+
+dir="$(make_copy r4-lean-attempt-without-results-caught)"
+rm -rf "$dir/verification/models/retry-budget"
+printf 'theorem retry_budget_attempt : True := trivial\n' > "$dir/verification/lean/RetryBudget.lean"
+mv "$dir/verification/lean/results.json" "$dir/verification/lean/results.json.bak"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["targets"][1]["tools"] = ["lean"]
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "r4-lean-attempt-without-results-caught" "$dir" "1" "C04" \
+  "target retry-budget is not_modeled but has no attempt on disk" --no-exec
+
+echo "== review round 4: C01 target ids and types =="
+dir="$(make_copy r4-duplicate-target-ids-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["targets"][1]["id"] = "job-drain"
+data["targets"][2]["id"] = "job-drain"
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "r4-duplicate-target-ids-caught" "$dir" "1" "C01" "duplicates an earlier target" --no-exec
+
+dir="$(make_copy r4-traversal-target-id-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["targets"][1]["id"] = "x/../job-drain"
+data["targets"][2]["id"] = ".."
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "r4-traversal-target-id-caught" "$dir" "1" "C01" "is not a non-empty string" --no-exec
+
+dir="$(make_copy r4-list-target-id-no-traceback)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["targets"][1]["id"] = ["a"]
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "r4-list-target-id-no-traceback" "$dir" "1" "C01" "is not a non-empty string" --no-exec
+
+dir="$(make_copy r4-non-string-invocation-no-traceback)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["invocation"] = ["/verify-formally"]
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "r4-non-string-invocation-no-traceback" "$dir" "1" "C01" \
+  "'invocation' must be a string" --no-exec
+
+dir="$(make_copy r4-vacuity-mutants-string-is-one-error)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["targets"][0]["properties"][0]["vacuity"]["mutants"] = "mutants/MutantFixedNoRelease.cfg"
+json.dump(data, open(path, "w"), indent=2)
+'
+vac_out="$(run_checker "$dir" --no-exec 2>&1)"
+vac_count="$(printf '%s\n' "$vac_out" | grep -c '^\[ERROR\] C01: .*vacuity\.mutants' || true)"
+if [ "$vac_count" = "1" ] && ! printf '%s' "$vac_out" | grep -q 'vacuity\.mutants\['; then
+  pass "r4-vacuity-mutants-string-is-one-error"
+else
+  fail "r4-vacuity-mutants-string-is-one-error (C01 lines naming vacuity.mutants: $vac_count, expected 1 and no per-character entries)"
+  echo "$vac_out" | sed 's/^/    /'
+fi
+
+dir="$(make_copy r4-wrong-type-targets-reported-once)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["targets"] = {}
+data["baseline"] = []
+json.dump(data, open(path, "w"), indent=2)
+'
+once_out="$(run_checker "$dir" --no-exec 2>&1)"
+once_targets="$(printf '%s\n' "$once_out" | grep -c "^\[ERROR\] C01: .*'targets' must be" || true)"
+once_baseline="$(printf '%s\n' "$once_out" | grep -c "^\[ERROR\] C01: .*'baseline' must be an object" || true)"
+if [ "$once_targets" = "1" ] && [ "$once_baseline" = "1" ]; then
+  pass "r4-wrong-type-targets-reported-once"
+else
+  fail "r4-wrong-type-targets-reported-once (targets lines: $once_targets, baseline lines: $once_baseline; expected 1 and 1)"
+  echo "$once_out" | sed 's/^/    /'
+fi
+
+echo "== review round 4: C16 attempt provenance =="
+dir="$(make_copy r4-hand-attempt-empty-log-caught)"
+mutate "$dir" '
+import json, os, sys
+tdir = sys.argv[1] + "/verification/models/retry-budget"
+for name in os.listdir(tdir + "/results"):
+    os.remove(tdir + "/results/" + name)
+spec = "verification/models/retry-budget/RetryBudget.tla"
+cfg = "verification/models/retry-budget/RetryBudget.cfg"
+handwritten = {
+    "result": "timeout", "violated": None, "distinct_states": None, "constants": {},
+    "command": "run_tlc.sh %s %s" % (spec, cfg), "spec": spec, "cfg": cfg,
+}
+json.dump(handwritten, open(tdir + "/results/RetryBudget.json", "w"))
+open(tdir + "/results/RetryBudget.log", "w").close()
+'
+check_case "r4-hand-attempt-empty-log-caught" "$dir" "1" "C16" \
+  "is not a TLC log of RetryBudget.tla" --no-exec
+
+dir="$(make_copy r4-hand-attempt-command-names-other-spec-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/models/retry-budget/results/RetryBudget.json"
+data = json.load(open(path))
+data["command"] = "run_tlc.sh x"
+json.dump(data, open(path, "w"))
+'
+check_case "r4-hand-attempt-command-names-other-spec-caught" "$dir" "1" "C16" \
+  "does not name the spec and cfg recorded in the JSON" --no-exec
+
+echo "== review round 5: scoped runs check attempts and what the modeled target covers =="
+dir="$(make_copy r5-scoped-unattempted-target-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["invocation"] = "/verify-formally demo/worker.py"
+data["fewer_targets_reason"] = ""
+modeled = data["targets"][0]
+modeled["files"] = ["demo/other.py"]
+data["targets"] = [modeled, {
+    "id": "worker-scope", "title": "x", "files": ["demo/worker.py"], "tools": ["tla"],
+    "status": "not_modeled", "properties": [],
+}]
+json.dump(data, open(path, "w"), indent=2)
+'
+check_lines "r5-scoped-unattempted-target-caught" "$dir" "1" "--no-exec" \
+  "ERROR|C04|target worker-scope is not_modeled without a reason" \
+  "ERROR|C04|target worker-scope is not_modeled but has no attempt on disk" \
+  "ERROR|C04|names demo/worker.py but no modeled target's files cover it"
+
+dir="$(make_copy r5-scoped-symbol-not-in-modeled-files-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["invocation"] = "/verify-formally Worker.drain"
+modeled = data["targets"][0]
+modeled["files"] = ["demo/other.py"]
+data["targets"] = [modeled, data["targets"][1]]
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "r5-scoped-symbol-not-in-modeled-files-caught" "$dir" "1" "C04" \
+  "names Worker.drain but no modeled target's files define it" --no-exec
+
+dir="$(make_copy r5-symbol-common-word-is-full-run)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["invocation"] = "/verify-formally (non-interactive, the job.queue)"
+data["targets"] = [data["targets"][0]]
+data["fewer_targets_reason"] = ""
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "r5-symbol-common-word-is-full-run" "$dir" "1" "C04" \
+  "lists only 1 selected target(s)" --no-exec
+
+dir="$(make_copy r5-reconcile-without-targets-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["invocation"] = "/verify-formally reconcile"
+data["targets"] = []
+data["findings"] = []
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "r5-reconcile-without-targets-caught" "$dir" "1" "C04" \
+  "a reconcile run" --no-exec
+
+echo "== review round 5: what counts as modeled for Lean properties =="
+lean_mutation='
+import json, os, sys
+d = sys.argv[1]
+result = sys.argv[2]
+theorems = json.loads(sys.argv[3])
+if len(sys.argv) > 4:
+    lean_path = d + "/verification/lean/results.json"
+    audit = json.load(open(lean_path))
+    audit["theorems"].extend({"name": t["name"], "status": "proved"} for t in theorems)
+    json.dump(audit, open(lean_path, "w"))
+path = d + "/verification/findings.json"
+data = json.load(open(path))
+data["targets"][0]["status"] = "not_modeled"
+data["targets"][0]["reason"] = "ran out of budget"
+data["findings"] = []
+os.makedirs(d + "/verification/models/fake")
+with open(d + "/verification/models/fake/CORRESPONDENCE.md", "w") as f:
+    for i in range(25):
+        f.write("- var x%d maps to demo/worker.py:%d\n" % (i, i + 1))
+prop = {"name": "P", "statement": "s", "source": "inferred", "tool": "lean", "result": result}
+if theorems:
+    prop["theorems"] = theorems
+data["targets"].append({
+    "id": "fake", "title": "t", "files": ["demo/worker.py"], "tools": ["lean"],
+    "status": "modeled", "properties": [prop],
+})
+json.dump(data, open(path, "w"), indent=2)
+'
+dir="$(make_copy r5-lean-no-violation-within-bounds-caught)"
+mutate "$dir" "$lean_mutation" no_violation_within_bounds '[]'
+check_lines "r5-lean-no-violation-within-bounds-caught" "$dir" "1" "--no-exec" \
+  "ERROR|C01|lean property has result='no_violation_within_bounds'" \
+  "ERROR|C04|has no modeled target"
+
+dir="$(make_copy r5-lean-violated-without-theorem-caught)"
+mutate "$dir" "$lean_mutation" violated '[]'
+check_case "r5-lean-violated-without-theorem-caught" "$dir" "1" "C04" "has no modeled target" --no-exec
+
+dir="$(make_copy r5-lean-violated-by-unproved-theorem-caught)"
+mutate "$dir" "$lean_mutation" violated '[{"name": "Nope.not_in_results"}]'
+check_case "r5-lean-violated-by-unproved-theorem-caught" "$dir" "1" "C04" "has no modeled target" --no-exec
+
+dir="$(make_copy r5-lean-violated-by-proved-theorem-counts)"
+mutate "$dir" "$lean_mutation" violated '[{"name": "Fake.not_released"}]' register
+check_lines "r5-lean-violated-by-proved-theorem-counts" "$dir" "0" "--no-exec" \
+  "!ERROR|C04|has no modeled target"
+
+dir="$(make_copy r6-lean-violated-borrowed-theorem-caught)"
+mutate "$dir" "$lean_mutation" violated '[{"name": "JobDrain.leases_released_after_drain"}]'
+check_case "r6-lean-violated-borrowed-theorem-caught" "$dir" "1" "C04" "has no modeled target" --no-exec
+
+dir="$(make_copy r6-lean-proved-borrowed-theorem-caught)"
+mutate "$dir" "$lean_mutation" proved '[{"name": "JobDrain.leases_released_after_drain"}]'
+check_case "r6-lean-proved-borrowed-theorem-caught" "$dir" "1" "C08" "belongs to another target" --no-exec
+
+echo "== review round 5: a Lean attempt must be about its own target =="
+dir="$(make_copy r5-lean-attempt-for-other-target-caught)"
+rm -rf "$dir/verification/models/retry-budget"
+printf 'theorem job_drain_only : True := trivial\n' > "$dir/verification/lean/JobDrain.lean"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["targets"][1]["tools"] = ["lean"]
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "r5-lean-attempt-for-other-target-caught" "$dir" "1" "C04" \
+  "target retry-budget is not_modeled but has no attempt on disk" --no-exec
+
+dir="$(make_copy r5-lean-attempt-results-without-result-field-caught)"
+rm -rf "$dir/verification/models/retry-budget"
+printf 'theorem retry_budget_attempt : True := trivial\n' > "$dir/verification/lean/RetryBudget.lean"
+printf '{"theorems": []}\n' > "$dir/verification/lean/results.json"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+data = json.load(open(path))
+data["targets"][1]["tools"] = ["lean"]
+json.dump(data, open(path, "w"), indent=2)
+'
+check_case "r5-lean-attempt-results-without-result-field-caught" "$dir" "1" "C04" \
+  "target retry-budget is not_modeled but has no attempt on disk" --no-exec
+
+echo "== review round 5: C16 re-run limit and per-group failures =="
+stub="$work/stub_run_tlc.sh"
+cat > "$stub" <<'STUBEOF'
+#!/usr/bin/env bash
+out=""
+args=("$@")
+for ((i = 0; i < $#; i++)); do
+  [ "${args[$i]}" = "--out" ] && out="${args[$((i + 1))]}"
+done
+case "$2" in
+  *SpecFixed.cfg)
+    printf '{"result": "pass", "distinct_states": 999}' > "$out"
+    exit 0
+    ;;
+esac
+echo "java: command not found" >&2
+exit 2
+STUBEOF
+chmod +x "$stub"
+unit_out="$("$python3_bin" - "$scripts_dir" "$good" "$stub" <<'PYEOF'
+import os, sys
+
+sys.path.insert(0, sys.argv[1])
+import check_run
+
+repo, stub = sys.argv[2], sys.argv[3]
+bad = []
+
+cores = os.cpu_count() or 1
+limit_rows = [
+    ((100, "1"), 401),
+    ((100, "4"), 1601),
+    ((1000, "4"), 1800),
+    ((1, "1"), 120),
+    ((100, "auto"), min(1800, max(120, 400 * cores + 1))),
+]
+for (elapsed, workers), want in limit_rows:
+    got = check_run._c16_rerun_limit(elapsed, workers)
+    if got != want:
+        bad.append("limit(%r, %r) = %r, expected %r" % (elapsed, workers, got, want))
+for tokens, want in (
+    (["run_tlc.sh", "a.tla", "a.cfg"], "auto"),
+    (["run_tlc.sh", "a.tla", "--workers", "2"], "2"),
+    (["run_tlc.sh", "a.tla", "--workers", "auto"], "auto"),
+):
+    got = check_run._c16_workers(tokens)
+    if got != want:
+        bad.append("workers(%r) = %r, expected %r" % (tokens, got, want))
+
+raw, err = check_run.load_json(os.path.join(repo, "verification", "findings.json"))
+clean, _ = check_run.sanitize(raw)
+check_run.RUN_TLC_SH = stub
+issues = check_run.check_c16_exec(check_run.Context(repo, clean))
+messages = [i["message"] for i in issues]
+starts = [m for m in messages if "failed to start" in m]
+mismatches = [m for m in messages if "gives distinct_states=999, stored 5" in m]
+if len(starts) != 1:
+    bad.append("expected one failed-to-start error, got %r" % starts)
+if not mismatches:
+    bad.append("the mismatch from the group that did start was dropped: %r" % messages)
+for line in bad:
+    print(line)
+sys.exit(1 if bad else 0)
+PYEOF
+)"
+if [ $? -eq 0 ]; then
+  pass "c16-limit-workers-and-continue-after-failed-group"
+else
+  fail "c16-limit-workers-and-continue-after-failed-group"
+  echo "$unit_out" | sed 's/^/    /'
+fi
 
 echo ""
 echo "$pass_count passed, $fail_count failed"

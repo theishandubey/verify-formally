@@ -8,25 +8,44 @@
 #   2  usage problem (bad arguments, repo-root does not exist)
 #
 # --json prints a JSON array of {"level", "check", "message", "fix"} instead of text.
-# --no-exec skips C10 and C11, which run commands from findings.json (repro_runner,
-# collect_command); everything else is static (reads files, git, JSON) and always runs.
-# --no-exec always emits a WARNING that C10/C11 were skipped.
+# --no-exec skips C10, C11 and the re-run half of C16, which run commands from findings.json
+# (repro_runner, collect_command) or re-run TLC; everything else is static (reads files, git,
+# JSON) and always runs. --no-exec always emits WARNINGs that these were skipped.
+# Commands run by C10 and C11 get <repo>/.venv/bin and <repo>/node_modules/.bin prepended to
+# PATH when those directories exist.
 #
 # This validator fails closed: any field with the wrong type, an unrecognized status/result/
 # tool value, or a missing required key is an ERROR, not a silent pass.
 #
 # Checks:
-#   C01  findings.json exists, parses, has the required fields, and every closed-set field
-#        (statuses, results, tools) is spelled exactly as documented
+#   C01  findings.json exists, parses, has schema verify-formally-findings/2 and the required
+#        fields (commit and invocation are strings), and every closed-set field (statuses,
+#        results, tools) is spelled exactly as documented; a lean property cannot have result
+#        no_violation_within_bounds (a tla-only result); target ids are unique non-empty
+#        strings of [A-Za-z0-9._-] other than "." and ".."; no field name is repaired; FIXED is
+#        allowed only in a reconcile run
 #   C02  findings.json commit matches `git -C <repo> rev-parse HEAD`
 #   C03  git status is confined to verification/ and plans/ (baseline.dirty_files excepted)
-#   C04  a full run models at least 3 targets, or states fewer_targets_reason
+#   C04  a reconcile run lists at least one target; every other run models at least 1 target.
+#        A target is modeled when its status is "modeled" and it has a checked property: for
+#        tla, result violated or no_violation_within_bounds; for lean, result proved, or
+#        violated with a cited theorem that verification/lean/results.json lists as proved and
+#        whose name or module mentions the target id. Every not_modeled target, in any
+#        non-reconcile run, has a reason and an attempt on disk (a .tla and a results/*.json;
+#        for a lean-only target a .lean file mentioning the target id plus a parseable
+#        verification/lean/results.json with a "result" field). A scoped run (a keyword such
+#        as quick, an existing repo path, or a symbol defined in a cited target file) needs
+#        each named path covered by a modeled target's files and each named symbol defined in
+#        one. A full run also selects at least 3 targets, fewer than 3 modeled needs
+#        fewer_targets_reason, and work under verification/models/ must be listed (WARN)
 #   C05  each modeled target has a real, non-trivial CORRESPONDENCE.md and >=1 property
 #   C06  each tla property's runs[] point at real, current, matching result JSON, inside the
 #        target's own directory, and a "violated" claim is backed by a run that actually
 #        violated that property by name (not a different invariant, not a bare deadlock)
 #   C07  each tla property's vacuity check (mutants + sanity) is real and non-vacuous
-#   C08  a lean property claiming "proved" is backed by verification/lean/results.json
+#   C08  a lean property claiming "proved" is backed by verification/lean/results.json, and each
+#        cited theorem is proved there and belongs to the citing target (name or module
+#        mentions the target id)
 #   C09  each CONFIRMED finding's repro/guard tests, locations, properties, evidence are real,
 #        and at least one cited property has result="violated" (a lean-only finding gets there
 #        by proving the negation theorem for the buggy configuration and recording "violated")
@@ -42,17 +61,28 @@
 #   C13  each CONFIRMED high/medium finding has a real plan with the required sections
 #   C14  every needs_decision/model_only/rejection entry has a reason or evidence (WARN)
 #   C15  a CONFIRMED finding resting on an inferred-source property is flagged (WARN)
+#   C16  every result JSON under a selected target's results/ (and every one cited by runs[],
+#        mutants, sanity) was produced by run_tlc.sh: a sibling <stem>.log exists and replays
+#        to the same result/violated/distinct_states/constants, its spec and cfg resolve inside
+#        the target directory, its command names run_tlc.sh with the same spec and cfg, and its
+#        log carries TLC's version banner and the spec name; (exec) every cited pass or
+#        violation cfg is re-run with this skill's run_tlc.sh and must reproduce result,
+#        violated, and (for pass) distinct_states
 import argparse
 import glob
 import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tlc_report  # noqa: E402
 
 VIOLATION_RESULTS = {
     "invariant_violation", "property_violation", "deadlock", "assertion_violation",
@@ -72,9 +102,13 @@ FILE_LINE_RE = re.compile(r"\w+\.\w+:\d+")
 DEFAULT_PYTEST_DISCOVERY = [re.compile(r"^test_.*\.py$"), re.compile(r".*_test\.py$")]
 REQUIRED_README_HEADINGS = ["Defaults taken", "Findings", "Properties checked", "Not modeled"]
 REPRO_TIMEOUT_SECONDS = 300
-FULL_RUN_TOKENS = {"deep", "non-interactive", "noninteractive", "tla", "lean", "full", "run"}
 SCOPED_TOKENS = {"quick", "repro", "reconcile"}
 COMMAND_WORDS = {"verify-formally", "verify"}
+INVOCATION_ABBREVIATIONS = {"e.g", "i.e", "etc", "vs", "cf", "a.k.a"}
+SYMBOL_RE = re.compile(r"^[A-Za-z_]\w*((\.|::)[A-Za-z_]\w*)+$")
+TARGET_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+LOG_VERSION_BANNER = "@!@!@STARTMSG 2262"
+SCHEMA_ID = "verify-formally-findings/2"
 
 
 def error(check, message, fix):
@@ -162,39 +196,113 @@ IGNORED_NAME_PARTS = {"__pycache__", ".pytest_cache", ".lake", ".venv"}
 PLAN_NAME_RE = re.compile(r"^\d+-.*\.md$")
 
 
-def is_full_run(invocation):
-    inv = (invocation or "").strip()
-    if not inv:
-        return False
-    cleaned = re.sub(r"[(),]", " ", inv)
+def _invocation_tokens(invocation):
+    if not isinstance(invocation, str):
+        return []
+    cleaned = re.sub(r"[(),]", " ", invocation)
     tokens = []
     for raw_tok in cleaned.split():
-        t = raw_tok.strip().strip("-").strip(".:;").lower()
+        t = raw_tok.strip().strip("-").rstrip(".:;")
         if not t:
             continue
-        bare = t.lstrip("/")
-        if bare in COMMAND_WORDS:
+        if t.lstrip("/").lower() in COMMAND_WORDS:
             continue
         tokens.append(t)
-    if not tokens:
-        return True
-    for t in tokens:
-        if t in SCOPED_TOKENS:
-            return False
-        if "/" in t or "\\" in t:
-            return False
-        if t not in FULL_RUN_TOKENS:
-            return False
-    return True
+    return tokens
 
 
-def _ensure_list(container, key, item_type, check, issues, label):
+def _target_files(targets):
+    files = []
+    for t in targets or []:
+        for f in t.get("files") or []:
+            if isinstance(f, str) and f.strip():
+                files.append(os.path.normpath(re.sub(r":\d+(-\d+)?$", "", f.strip())))
+    return files
+
+
+def _token_repo_path(repo, tok):
+    base = re.sub(r":\d+(-\d+)?$", "", tok.split("::")[0]).replace("\\", "/")
+    if not base:
+        return None
+    candidate = base if os.path.isabs(base) else os.path.join(repo, base)
+    real_repo = os.path.realpath(repo)
+    real = os.path.realpath(candidate)
+    if os.path.exists(real) and (real == real_repo or real.startswith(real_repo + os.sep)):
+        return os.path.relpath(real, real_repo)
+    return None
+
+
+CONTROL_WORDS = {
+    "if", "elif", "else", "while", "for", "switch", "case", "return", "catch", "with", "assert",
+    "not", "and", "or", "in", "is", "yield", "await", "throw", "new", "do", "try",
+}
+
+
+def _definition_patterns(name):
+    return [
+        re.compile(
+            r"^\s*(?P<pre>(?:[A-Za-z_]+\s+)*)(?:def|class|func|function|fn)\s+"
+            r"(?:\([^)]*\)\s*)?%s\b" % name, re.MULTILINE),
+        re.compile(r"^\s*(?P<pre>(?:[A-Za-z_]+\s+)*)%s\s*[=:](?!=)" % name, re.MULTILINE),
+        re.compile(
+            r"^\s*(?P<pre>(?:[A-Za-z_<>\[\]]+\s+)*)%s\s*\([^)]*\)\s*(?::\s*[^{=;]+)?\s*\{"
+            % name, re.MULTILINE),
+    ]
+
+
+def _symbol_defined_in(repo, files, tok):
+    if not SYMBOL_RE.match(tok):
+        return False
+    patterns = _definition_patterns(re.escape(re.split(r"\.|::", tok)[-1]))
+    for rel in set(files):
+        path = os.path.join(repo, rel)
+        if not os.path.isfile(path):
+            continue
+        text = read_text(path)
+        for pattern in patterns:
+            for m in pattern.finditer(text):
+                if not CONTROL_WORDS & set(m.group("pre").split()):
+                    return True
+    return False
+
+
+def _symbol_in_target_files(repo, targets, tok):
+    return _symbol_defined_in(repo, _target_files(targets), tok)
+
+
+def invocation_scope(invocation, repo, targets):
+    keywords, paths, symbols = [], [], []
+    for tok in _invocation_tokens(invocation):
+        low = tok.lower()
+        if low in SCOPED_TOKENS:
+            keywords.append(low)
+        elif low in INVOCATION_ABBREVIATIONS:
+            continue
+        elif (rel := _token_repo_path(repo, tok)):
+            paths.append(rel)
+        elif _symbol_in_target_files(repo, targets, tok):
+            symbols.append(tok)
+    return keywords, paths, symbols
+
+
+def is_full_run(invocation, repo, targets):
+    if not isinstance(invocation, str) or not invocation.strip():
+        return False
+    return not any(invocation_scope(invocation, repo, targets))
+
+
+def is_reconcile_run(invocation):
+    return "reconcile" in [t.lower() for t in _invocation_tokens(invocation)]
+
+
+def _ensure_list(container, key, item_type, check, issues, label, report_type=True):
     v = container.get(key)
     if v is None:
         return
     if not isinstance(v, list):
-        issues.append(error(check, "%s must be a list, got %s" % (label, type(v).__name__),
-                             "make %r a JSON array" % key))
+        if report_type:
+            issues.append(error(check, "%s must be a list, got %s" % (label, type(v).__name__),
+                                 "make %r a JSON array" % key))
         container[key] = []
         return
     cleaned = []
@@ -212,29 +320,21 @@ def _ensure_list(container, key, item_type, check, issues, label):
 
 def sanitize(raw):
     issues = []
-    if not isinstance(raw, dict):
-        return {}, [error(
-            "C01", "findings.json top-level value must be a JSON object, got %s"
-            % type(raw).__name__,
-            "findings.json's root must be an object (schema/commit/targets/findings/"
-            "baseline/...)",
-        )]
     data = dict(raw)
 
     if "baseline" in data and data["baseline"] is not None and not isinstance(
             data["baseline"], dict):
-        issues.append(error(
-            "C01", "findings.json 'baseline' must be an object, got %s"
-            % type(data["baseline"]).__name__, "make 'baseline' an object",
-        ))
         data["baseline"] = {}
 
     for key in ("needs_decision", "model_only", "rejections", "refuted_claims", "plans",
                 "coverage_gaps"):
         _ensure_list(data, key, dict, "C01", issues, "findings.json %r" % key)
 
-    _ensure_list(data, "targets", dict, "C01", issues, "findings.json 'targets'")
+    _ensure_list(data, "targets", dict, "C01", issues, "findings.json 'targets'",
+                 report_type=False)
     for i, t in enumerate(data.get("targets") or []):
+        if not isinstance(t.get("id"), str):
+            t["id"] = "target[%d]" % i
         _ensure_list(t, "properties", dict, "C01", issues,
                      "findings.json targets[%d].properties" % i)
         for j, p in enumerate(t.get("properties") or []):
@@ -251,8 +351,12 @@ def sanitize(raw):
                     "make 'vacuity' an object with status/mutants/sanity",
                 ))
                 p["vacuity"] = None
+            if isinstance(p.get("vacuity"), dict):
+                for key in ("mutants", "sanity"):
+                    _ensure_list(p["vacuity"], key, str, "C01", issues, label + ".vacuity." + key)
 
-    _ensure_list(data, "findings", dict, "C01", issues, "findings.json 'findings'")
+    _ensure_list(data, "findings", dict, "C01", issues, "findings.json 'findings'",
+                 report_type=False)
     for i, f in enumerate(data.get("findings") or []):
         label = "findings.json findings[%d]" % i
         _ensure_list(f, "locations", dict, "C01", issues, label + ".locations")
@@ -263,100 +367,93 @@ def sanitize(raw):
     return data, issues
 
 
-def normalize(raw):
-    issues = []
-    data = dict(raw)
-
-    if "tree" not in data and "tree_dirty" in data:
-        data["tree"] = "dirty" if data["tree_dirty"] else "clean"
-        issues.append(warn("C01", "findings.json uses 'tree_dirty' instead of 'tree'",
-                            "use the documented 'tree': 'clean'|'dirty' field"))
-
-    norm_targets = []
-    for t in data.get("targets") or []:
-        t = dict(t)
-        norm_props = []
-        for prop in t.get("properties") or []:
-            prop = dict(prop)
-            if "runs" not in prop and ("config" in prop or "model" in prop):
-                prop["runs"] = [{
-                    "cfg": prop.get("config"),
-                    "json": None,
-                    "result": None,
-                    "constants": prop.get("bounds"),
-                    "distinct_states": prop.get("distinct_states"),
-                }]
-                prop["_runs_synthesized"] = True
-                issues.append(warn(
-                    "C06",
-                    "target %r property %r uses schema v1 fields (model/config/result) "
-                    "instead of runs[]" % (t.get("id"), prop.get("name")),
-                    "upgrade to schema verify-formally-findings/2 with runs[].json pointing at "
-                    "results/<cfg-stem>.json",
-                ))
-            norm_props.append(prop)
-        t["properties"] = norm_props
-        norm_targets.append(t)
-    data["targets"] = norm_targets
-
-    norm_findings = []
-    for f in data.get("findings") or []:
-        f = dict(f)
-        fid = f.get("id", "?")
-        for plural, singular in (
-            ("targets", "target"), ("properties", "property"),
-            ("repro_tests", "repro_test"), ("guard_tests", "guard_test"),
-        ):
-            if plural not in f and singular in f:
-                v = f[singular]
-                f[plural] = [v] if v else []
-                issues.append(warn(
-                    "C09", "finding %s uses %r instead of %r" % (fid, singular, plural),
-                    "use the documented %r list field" % plural,
-                ))
-        norm_findings.append(f)
-    data["findings"] = norm_findings
-
-    return data, issues
-
-
 class Context:
     def __init__(self, repo, findings):
         self.repo = repo
         self.findings = findings
+        self.cache = {}
 
     @property
     def targets(self):
         return self.findings.get("targets") or []
 
 
+REQUIRED_TOP_LEVEL = (
+    ("commit", str), ("invocation", str), ("baseline", dict), ("targets", list),
+    ("findings", list),
+)
+TYPE_DESCRIPTIONS = {
+    str: ("a string", "a JSON string"), list: ("a list", "a JSON array"),
+    dict: ("an object", "a JSON object"),
+}
+SINGULAR_FIELDS = (
+    ("targets", "target"), ("properties", "property"), ("repro_tests", "repro_test"),
+    ("guard_tests", "guard_test"),
+)
+
+
+def check_c01_raw(raw):
+    if not isinstance(raw, dict):
+        return [error(
+            "C01", "findings.json top-level value must be a JSON object, got %s"
+            % type(raw).__name__,
+            "findings.json's root must be an object (schema/commit/targets/findings/"
+            "baseline/...)",
+        )]
+    issues = []
+    if raw.get("schema") != SCHEMA_ID:
+        issues.append(error(
+            "C01", "findings.json schema is %r, not %r" % (raw.get("schema"), SCHEMA_ID),
+            "set schema to exactly %r and use the field names in references/finding-format.md"
+            % SCHEMA_ID,
+        ))
+    for key, expected in REQUIRED_TOP_LEVEL:
+        if key not in raw:
+            issues.append(error(
+                "C01", "findings.json is missing %r" % key,
+                "add a top-level %r field (see references/finding-format.md section 3)" % key,
+            ))
+        elif not isinstance(raw[key], expected):
+            issues.append(error(
+                "C01", "findings.json %r must be %s, got %s"
+                % (key, TYPE_DESCRIPTIONS[expected][0], type(raw[key]).__name__),
+                "make %r %s" % (key, TYPE_DESCRIPTIONS[expected][1]),
+            ))
+    if isinstance(raw.get("targets"), list):
+        seen = set()
+        for i, t in enumerate(raw["targets"]):
+            if not isinstance(t, dict):
+                continue
+            tid = t.get("id")
+            if not (isinstance(tid, str) and TARGET_ID_RE.match(tid) and tid not in (".", "..")):
+                issues.append(error(
+                    "C01", "targets[%d].id %r is not a non-empty string of [A-Za-z0-9._-] "
+                    "(not '.' or '..')" % (i, tid),
+                    "give every target a short unique directory-safe id; it names "
+                    "verification/models/<id>/",
+                ))
+            elif tid in seen:
+                issues.append(error(
+                    "C01", "targets[%d].id %r duplicates an earlier target" % (i, tid),
+                    "every target needs its own id; duplicate ids make one target's files "
+                    "count for several",
+                ))
+            else:
+                seen.add(tid)
+    return issues
+
+
 def check_c01(ctx):
     issues = []
     d = ctx.findings
-    for key in ("schema", "commit", "invocation"):
-        if key not in d:
-            issues.append(error("C01", "findings.json is missing %r" % key,
-                                 "add a top-level %r field" % key))
-    if "commit" in d and not (isinstance(d.get("commit"), str) and d.get("commit").strip()):
+    if isinstance(d.get("commit"), str) and not d["commit"].strip():
         issues.append(error("C01", "findings.json 'commit' is empty",
                              "set commit to the full HEAD SHA (git rev-parse HEAD)"))
-    if "invocation" in d and not (
-            isinstance(d.get("invocation"), str) and d.get("invocation").strip()):
+    if isinstance(d.get("invocation"), str) and not d["invocation"].strip():
         issues.append(error("C01", "findings.json 'invocation' is empty",
                              "set invocation to the exact command that started this run"))
-    if not isinstance(d.get("targets"), list):
-        issues.append(error("C01", "findings.json 'targets' is missing or not a list",
-                             "add a top-level 'targets' list"))
-    if not isinstance(d.get("findings"), list):
-        issues.append(error("C01", "findings.json 'findings' is missing or not a list",
-                             "add a top-level 'findings' list"))
     baseline = d.get("baseline")
-    if not isinstance(baseline, dict):
-        issues.append(error("C01", "findings.json is missing 'baseline'",
-                             "add a 'baseline' object with test_command/repro_runner/"
-                             "collect_command"))
-        baseline = {}
-    else:
+    if isinstance(baseline, dict):
         for key in ("test_command", "repro_runner", "collect_command"):
             if not baseline.get(key):
                 issues.append(error("C01", "findings.json baseline is missing %r" % key,
@@ -397,6 +494,13 @@ def check_c01(ctx):
                     % (tag, p.get("result"), sorted(PROPERTY_RESULTS)),
                     "use exactly one of %s" % sorted(PROPERTY_RESULTS),
                 ))
+            elif p.get("tool") == "lean" and p.get("result") == "no_violation_within_bounds":
+                issues.append(error(
+                    "C01", "%s: lean property has result='no_violation_within_bounds', which "
+                    "applies only to tla properties" % tag,
+                    "a Lean theorem is 'proved', 'unproved', or 'violated' by a proved "
+                    "negation theorem; use one of those",
+                ))
 
     for i, f in enumerate(d.get("findings") or []):
         fid = f.get("id", "finding[%d]" % i)
@@ -409,6 +513,22 @@ def check_c01(ctx):
                 % (fid, f.get("status"), sorted(FINDING_STATUSES)),
                 "use exactly one of %s" % sorted(FINDING_STATUSES),
             ))
+        if f.get("status") == "FIXED" and not is_reconcile_run(d.get("invocation")):
+            issues.append(error(
+                "C01", "finding %s has status FIXED but the invocation %r is not a reconcile "
+                "run" % (fid, d.get("invocation")),
+                "FIXED is set only by /verify-formally reconcile; in any other run a repro "
+                "that passes on current code is not a finding: remove it or re-check the "
+                "model",
+            ))
+        for plural, singular in SINGULAR_FIELDS:
+            if singular in f and plural not in f:
+                issues.append(error(
+                    "C01", "finding %s uses %r; the documented field is %r"
+                    % (fid, singular, plural),
+                    "rename to the plural list field; the validator does not repair field "
+                    "names",
+                ))
         sev = f.get("severity")
         if sev is not None and sev not in SEVERITIES:
             issues.append(error(
@@ -438,6 +558,8 @@ def check_c02(ctx):
                        "run check_run.py against a git repository with at least one commit")]
     head = head.strip()
     commit = ctx.findings.get("commit")
+    if not isinstance(commit, str):
+        return []
     if not commit:
         return [error("C02", "findings.json 'commit' is empty",
                        "set commit to the full HEAD SHA (git rev-parse HEAD)")]
@@ -461,7 +583,7 @@ def check_c03(ctx):
     if lines is None:
         return [error("C03", "cannot read git status for %s (%s)" % (ctx.repo, err),
                        "run check_run.py against a git repository")]
-    dirty_files = set(ctx.findings.get("baseline", {}).get("dirty_files") or [])
+    dirty_files = set((ctx.findings.get("baseline") or {}).get("dirty_files") or [])
     ignore_cache = {}
     offenders = []
     for line in lines:
@@ -501,28 +623,193 @@ def check_c03(ctx):
     return []
 
 
+def _lean_audited_theorems(repo):
+    data, err = load_json(os.path.join(repo, "verification", "lean", "results.json"))
+    if err or not isinstance(data, dict):
+        return {}
+    audited = {}
+    for key in ("theorems", "user_theorems"):
+        for th in data.get(key) or []:
+            if isinstance(th, dict) and th.get("name"):
+                audited[th["name"]] = th
+    return audited
+
+
+def _theorem_belongs_to(target_id, name, audited_entry):
+    wanted = _alnum(str(target_id))
+    owner = "%s %s" % (name, (audited_entry or {}).get("module") or "")
+    return bool(wanted) and wanted in _alnum(owner)
+
+
+def _property_is_checked(repo, target_id, prop):
+    result = prop.get("result")
+    if prop.get("tool") == "tla":
+        return result in ("violated", "no_violation_within_bounds")
+    if prop.get("tool") == "lean":
+        if result == "proved":
+            return True
+        audited = _lean_audited_theorems(repo)
+        theorems = prop.get("theorems") or prop.get("user_theorems") or []
+        return result == "violated" and any(
+            isinstance(th, dict) and th.get("name") in audited
+            and audited[th["name"]].get("status") == "proved"
+            and _theorem_belongs_to(target_id, th["name"], audited[th["name"]])
+            for th in theorems)
+    return False
+
+
+def _is_modeled(repo, target):
+    return target.get("status") == "modeled" and any(
+        _property_is_checked(repo, target.get("id"), p) for p in target.get("properties") or [])
+
+
+def _alnum(text):
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _has_attempt(repo, target, tdir):
+    specs = glob.glob(os.path.join(tdir, "*.tla")) + glob.glob(
+        os.path.join(tdir, "mutants", "*.tla"))
+    if specs and glob.glob(os.path.join(tdir, "results", "*.json")):
+        return True
+    if target.get("tools") != ["lean"]:
+        return False
+    lean_dir = os.path.join(repo, "verification", "lean")
+    results, err = load_json(os.path.join(lean_dir, "results.json"))
+    if err or not isinstance(results, dict) or "result" not in results:
+        return False
+    wanted = _alnum(str(target.get("id", "")))
+    for f in glob.glob(os.path.join(lean_dir, "**", "*.lean"), recursive=True):
+        if ".lake" in f.split(os.sep):
+            continue
+        if wanted and wanted in _alnum(os.path.relpath(f, lean_dir) + "\n" + read_text(f)):
+            return True
+    return False
+
+
+def _path_in_target_files(path, files):
+    return any(f == path or f.startswith(path + os.sep) or path == "." for f in files)
+
+
 def check_c04(ctx):
-    inv = ctx.findings.get("invocation") or ""
-    if not is_full_run(inv):
-        return []
-    modeled = [t for t in ctx.targets if t.get("status") == "modeled"]
-    if len(modeled) >= 3:
-        return []
-    reason = ctx.findings.get("fewer_targets_reason")
-    if reason and str(reason).strip():
-        return [warn(
+    inv = ctx.findings.get("invocation")
+    inv = inv if isinstance(inv, str) else ""
+    models_dir = os.path.join(ctx.repo, "verification", "models")
+    targets = ctx.targets
+    issues = []
+    if is_reconcile_run(inv):
+        if not targets:
+            issues.append(error(
+                "C04", "a reconcile run (%r) lists no target in targets[]" % inv,
+                "list the targets whose findings were reconciled in targets[]",
+            ))
+        return issues
+    keywords, paths, symbols = invocation_scope(inv, ctx.repo, targets)
+    full = bool(inv.strip()) and not (keywords or paths or symbols)
+    modeled = [t for t in targets if _is_modeled(ctx.repo, t)]
+    attempts = [t for t in targets if t.get("status") == "not_modeled"]
+    reason = str(ctx.findings.get("fewer_targets_reason") or "")
+
+    for t in attempts:
+        tid = str(t.get("id", "?"))
+        tdir = os.path.join(models_dir, tid)
+        if not str(t.get("reason") or "").strip():
+            issues.append(error(
+                "C04", "target %s is not_modeled without a reason" % tid,
+                "add targets[].reason saying why modeling was abandoned",
+            ))
+        if not _has_attempt(ctx.repo, t, tdir):
+            issues.append(error(
+                "C04",
+                "target %s is not_modeled but has no attempt on disk under %s (need a .tla "
+                "and at least one results/*.json from run_tlc.sh; a lean-only target needs a "
+                ".lean file naming the target and a results.json with a result field under "
+                "verification/lean/)" % (tid, tdir),
+                "an abandoned target keeps its spec and its run_tlc.sh result (timeout or "
+                "error included); if nothing was ever run, select the next ranked target "
+                "instead",
+            ))
+
+    if not full:
+        modeled_files = _target_files(modeled)
+        for path in paths:
+            if not _path_in_target_files(path, modeled_files):
+                issues.append(error(
+                    "C04",
+                    "the invocation %r names %s but no modeled target's files cover it"
+                    % (inv, path),
+                    "model a target whose files cover %s, or name the path of the target you "
+                    "did model" % path,
+                ))
+        for sym in symbols:
+            if not _symbol_defined_in(ctx.repo, modeled_files, sym):
+                issues.append(error(
+                    "C04",
+                    "the invocation %r names %s but no modeled target's files define it"
+                    % (inv, sym),
+                    "model a target whose files define %s" % sym,
+                ))
+        if not modeled:
+            issues.append(error(
+                "C04",
+                "a scoped run (%r) has no modeled target (a modeled target needs a TLA+ "
+                "property with result violated or no_violation_within_bounds, or a Lean "
+                "property proved or violated by a proved theorem); fewer_targets_reason=%r "
+                "does not excuse this" % (inv, reason),
+                "model at least one target completely (spec, vacuity, runs) before reporting; "
+                "a run with no modeled target is INCOMPLETE",
+            ))
+        return issues
+
+    if len(targets) < 3:
+        issues.append(error(
             "C04",
-            "only %d modeled target(s) in a full run (%r); fewer_targets_reason=%r"
-            % (len(modeled), inv, reason),
-            "confirm the reason is real; a full run should usually model the top 3 targets",
-        )]
-    return [error(
-        "C04",
-        "only %d modeled target(s) in a full run (%r), and fewer_targets_reason is empty"
-        % (len(modeled), inv),
-        "model at least 3 targets, or set fewer_targets_reason explaining why fewer were "
-        "modeled",
-    )]
+            "a full run (%r) lists only %d selected target(s) in targets[]; a full run "
+            "selects at least 3" % (inv, len(targets)),
+            "list every selected target (default: the top 3 ranked) in targets[], as "
+            "'modeled' or as 'not_modeled' with a reason and an attempt on disk",
+        ))
+
+    if not modeled:
+        issues.append(error(
+            "C04",
+            "a full run (%r) has no modeled target (a modeled target needs a TLA+ property "
+            "with result violated or no_violation_within_bounds, or a Lean property proved or "
+            "violated by a proved theorem); fewer_targets_reason=%r does not excuse this"
+            % (inv, reason),
+            "model at least one target completely (spec, vacuity, runs) before reporting; a "
+            "run with no modeled target is INCOMPLETE",
+        ))
+
+    if len(modeled) < 3:
+        if not reason.strip():
+            issues.append(error(
+                "C04",
+                "only %d modeled target(s) in a full run (%r), and fewer_targets_reason is "
+                "empty" % (len(modeled), inv),
+                "model at least 3 targets, or set fewer_targets_reason explaining why fewer "
+                "were modeled",
+            ))
+        elif not issues:
+            issues.append(warn(
+                "C04",
+                "only %d modeled target(s) in a full run (%r); fewer_targets_reason=%r"
+                % (len(modeled), inv, reason),
+                "confirm the reason is real; each not_modeled target above has an attempt on "
+                "disk",
+            ))
+
+    listed = {str(t.get("id")) for t in targets}
+    if os.path.isdir(models_dir):
+        for name in sorted(os.listdir(models_dir)):
+            if name not in listed and os.path.isdir(os.path.join(models_dir, name)):
+                issues.append(warn(
+                    "C04",
+                    "verification/models/%s exists but is not listed in targets[]" % name,
+                    "list it as modeled or not_modeled (with reason); work that is not listed "
+                    "is not reported",
+                ))
+    return issues
 
 
 def check_c05(ctx):
@@ -1039,9 +1326,11 @@ def check_c08(ctx):
             "a Lean theorem is proved only when the audit reports result=proved",
         ))
     audited = {}
+    audited_entries = {}
     for th in (data.get("theorems") or []) + (data.get("user_theorems") or []):
         if isinstance(th, dict) and th.get("name"):
             audited[th["name"]] = th.get("status")
+            audited_entries[th["name"]] = th
     for tid, p in proved_props:
         names = [th.get("name") for th in (p.get("theorems") or p.get("user_theorems") or [])
                  if isinstance(th, dict)]
@@ -1060,6 +1349,14 @@ def check_c08(ctx):
                     "%s/%s: theorem %r is %r in verification/lean/results.json, not "
                     "'proved'" % (tid, p.get("name"), name, status),
                     "never claim proved unless lean_audit.sh reports this theorem proved",
+                ))
+            elif not _theorem_belongs_to(tid, name, audited_entries.get(name)):
+                issues.append(error(
+                    "C08",
+                    "%s/%s: theorem %r belongs to another target (neither its name nor its "
+                    "module mentions %r)" % (tid, p.get("name"), name, tid),
+                    "cite only theorems of this target's own Lean model, namespaced or "
+                    "housed in a module named after the target id",
                 ))
     return issues
 
@@ -1164,11 +1461,19 @@ def check_c09(ctx):
     return issues
 
 
-def run_shell(repo, cmd, timeout):
+def tool_env(repo):
+    env = dict(os.environ)
+    extra = [d for d in (os.path.join(repo, ".venv", "bin"),
+                         os.path.join(repo, "node_modules", ".bin")) if os.path.isdir(d)]
+    env["PATH"] = os.pathsep.join(extra + [env.get("PATH", "")])
+    return env
+
+
+def run_shell(repo, cmd, timeout, env=None):
     try:
         proc = subprocess.Popen(
             ["bash", "-c", cmd], cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, start_new_session=True,
+            text=True, start_new_session=True, env=env,
         )
     except OSError as e:
         return None, "", str(e), False
@@ -1187,6 +1492,10 @@ def run_shell(repo, cmd, timeout):
         return None, out, err, True
 
 
+COMMAND_NOT_FOUND_FIX = (
+    "name the interpreter explicitly (.venv/bin/python -m pytest --collect-only -q) or create "
+    "the project's .venv"
+)
 EXCEPTION_TYPE_FROM_MESSAGE_RE = re.compile(r"^([A-Za-z_][\w.]*):")
 
 
@@ -1242,7 +1551,7 @@ def _run_pytest_junit(repo, runner, test_id, timeout):
     try:
         cmd = "%s %s --junitxml=%s --tb=long" % (
             runner, shlex.quote(test_id), shlex.quote(xml_path))
-        rc, _out, _err, timed_out = run_shell(repo, cmd, timeout)
+        rc, _out, _err, timed_out = run_shell(repo, cmd, timeout, tool_env(repo))
         cases = parse_junit_testcases(xml_path) if os.path.isfile(xml_path) else None
         return rc, cases, timed_out
     finally:
@@ -1259,6 +1568,13 @@ def _check_c10_pytest_repro(repo, runner, fid, rt, prop_names):
             "C10", "finding %s: repro test %s timed out after %ds"
             % (fid, rt, REPRO_TIMEOUT_SECONDS),
             "fix the repro test so it fails fast (bound runaway retries/hangs)",
+        )]
+    if not cases and rc == 127:
+        return [error(
+            "C10",
+            "finding %s: repro test %s produced no parseable junit result (exit 127, command "
+            "not found; the runner's interpreter is not on PATH)" % (fid, rt),
+            COMMAND_NOT_FOUND_FIX,
         )]
     if not cases:
         return [error(
@@ -1322,6 +1638,13 @@ def _check_c10_pytest_guard(repo, runner, fid, gt):
             % (fid, gt, REPRO_TIMEOUT_SECONDS),
             "fix the guard test so it terminates",
         )]
+    if not cases and rc == 127:
+        return [error(
+            "C10",
+            "finding %s: guard test %s produced no parseable junit result (exit 127, command "
+            "not found; the runner's interpreter is not on PATH)" % (fid, gt),
+            COMMAND_NOT_FOUND_FIX,
+        )]
     if not cases:
         return [error(
             "C10",
@@ -1368,7 +1691,7 @@ def _substitute_repro_runner(runner, rt):
 def _check_c10_placeholder_repro(repo, runner, fid, rt, prop_names):
     _file_part, test_part, _dir_part = _split_repro_id(rt)
     cmd = _substitute_repro_runner(runner, rt)
-    rc, out, err, timed_out = run_shell(repo, cmd, REPRO_TIMEOUT_SECONDS)
+    rc, out, err, timed_out = run_shell(repo, cmd, REPRO_TIMEOUT_SECONDS, tool_env(repo))
     if timed_out:
         return [error(
             "C10", "finding %s: repro test %s timed out after %ds"
@@ -1420,7 +1743,7 @@ def _check_c10_placeholder_repro(repo, runner, fid, rt, prop_names):
 def _check_c10_placeholder_guard(repo, runner, fid, gt):
     _file_part, test_part, _dir_part = _split_repro_id(gt)
     cmd = _substitute_repro_runner(runner, gt)
-    rc, out, err, timed_out = run_shell(repo, cmd, REPRO_TIMEOUT_SECONDS)
+    rc, out, err, timed_out = run_shell(repo, cmd, REPRO_TIMEOUT_SECONDS, tool_env(repo))
     if timed_out:
         return [error(
             "C10", "finding %s: guard test %s timed out after %ds"
@@ -1511,12 +1834,20 @@ def check_c11(ctx):
     collect_cmd = (ctx.findings.get("baseline") or {}).get("collect_command")
     if not collect_cmd:
         return []
-    rc, out, err, timed_out = run_shell(ctx.repo, collect_cmd, REPRO_TIMEOUT_SECONDS)
+    rc, out, err, timed_out = run_shell(
+        ctx.repo, collect_cmd, REPRO_TIMEOUT_SECONDS, tool_env(ctx.repo))
     if timed_out:
         return [error("C11", "collect_command timed out after %ds" % REPRO_TIMEOUT_SECONDS,
                        "fix collect_command so it runs quickly")]
     issues = []
-    if rc not in (0, 5):
+    if rc == 127:
+        issues.append(error(
+            "C11",
+            "collect_command exited 127 (command not found) even with %s/.venv/bin on PATH: "
+            "%s" % (ctx.repo, (err or out).strip()[:200]),
+            COMMAND_NOT_FOUND_FIX,
+        ))
+    elif rc not in (0, 5):
         issues.append(error(
             "C11", "collect_command exited %s (expected 0, or 5 for 'no tests collected')" % rc,
             "fix collect_command so it actually runs (check the interpreter/venv path)",
@@ -1681,11 +2012,277 @@ def check_c15(ctx):
     return issues
 
 
+RUN_TLC_SH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_tlc.sh")
+
+
+def _c16_add(entries, path, tid, label, cited):
+    e = entries.setdefault(os.path.normpath(path), {"target": tid, "labels": [], "cited": False})
+    if label and label not in e["labels"]:
+        e["labels"].append(label)
+    e["cited"] = e["cited"] or cited
+
+
+def cited_results(ctx):
+    if "cited" not in ctx.cache:
+        ctx.cache["cited"] = _collect_cited_results(ctx)
+    return ctx.cache["cited"]
+
+
+def _collect_cited_results(ctx):
+    entries = {}
+    for t in ctx.targets:
+        tid = str(t.get("id", "?"))
+        target_dir = os.path.join(ctx.repo, "verification", "models", tid)
+        for path in sorted(glob.glob(os.path.join(target_dir, "results", "*.json"))):
+            _c16_add(entries, path, tid, None, False)
+        for prop in t.get("properties") or []:
+            if prop.get("tool") != "tla":
+                continue
+            label = "%s/%s" % (tid, prop.get("name", "?"))
+            for run in prop.get("runs") or []:
+                path = resolve_repo_relative(ctx.repo, run.get("json"))
+                if path and in_target_dir(path, target_dir):
+                    _c16_add(entries, path, tid, label, True)
+            vac = prop.get("vacuity") or {}
+            for key in ("mutants", "sanity"):
+                for entry in vac.get(key) or []:
+                    path = resolve_result_json(entry, target_dir, ctx.repo)
+                    if path:
+                        _c16_add(entries, path, tid, label, True)
+    return entries
+
+
+def _c16_extra_args(tokens):
+    return tokens[tokens.index("--") + 1:] if "--" in tokens else []
+
+
+def _c16_command_positionals(tokens):
+    positionals = []
+    skip = False
+    for tok in tokens[1:]:
+        if skip:
+            skip = False
+        elif tok == "--":
+            break
+        elif tok in ("--out", "--workers", "--timeout"):
+            skip = True
+        elif not tok.startswith("--"):
+            positionals.append(tok)
+    return positionals
+
+
+def _c16_command_names(ctx, tokens, resolved):
+    positionals = _c16_command_positionals(tokens)
+    if not positionals:
+        return False
+    spec_arg = positionals[0]
+    cfg_arg = positionals[1] if len(positionals) > 1 else re.sub(r"\.tla$", "", spec_arg) + ".cfg"
+    for arg, key in ((spec_arg, "spec"), (cfg_arg, "cfg")):
+        found = resolve_repo_relative(ctx.repo, arg)
+        if not found or os.path.realpath(found) != os.path.realpath(resolved[key]):
+            return False
+    return True
+
+
+def _c16_inspect(ctx, path, info):
+    inspected = ctx.cache.setdefault("inspect", {})
+    if path not in inspected:
+        inspected[path] = _c16_inspect_uncached(ctx, path, info)
+    return inspected[path]
+
+
+def _c16_inspect_uncached(ctx, path, info):
+    rel = os.path.relpath(path, ctx.repo)
+    target_dir = os.path.join(ctx.repo, "verification", "models", info["target"])
+    data, err = load_json(path)
+    if err or not isinstance(data, dict):
+        return None, error("C16", "%s: result JSON does not parse" % rel,
+                           "regenerate the result JSON with run_tlc.sh --out")
+    command = data.get("command")
+    tokens = None
+    if isinstance(command, str):
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            tokens = None
+    if not tokens or os.path.basename(tokens[0]) != "run_tlc.sh":
+        return None, error(
+            "C16", "%s: result JSON was not produced by run_tlc.sh (command=%r)"
+            % (rel, command),
+            "never write or edit a result JSON by hand; delete it and produce it with "
+            "run_tlc.sh --out",
+        )
+    resolved = {}
+    for key in ("spec", "cfg"):
+        found = resolve_repo_relative(ctx.repo, data.get(key))
+        if not found or not in_target_dir(found, target_dir):
+            return None, error(
+                "C16", "%s: result JSON's %s %r does not resolve to a file under %s"
+                % (rel, key, data.get(key), target_dir),
+                "re-run run_tlc.sh with a spec and cfg inside this target's directory",
+            )
+        resolved[key] = found
+    if not _c16_command_names(ctx, tokens, resolved):
+        return None, error(
+            "C16", "%s: command %r does not name the spec and cfg recorded in the JSON"
+            % (rel, command),
+            "never write or edit a result JSON by hand; delete it and produce it with "
+            "run_tlc.sh --out",
+        )
+    log_path = path[:-len(".json")] + ".log" if path.endswith(".json") else path + ".log"
+    if not os.path.isfile(log_path):
+        return None, error(
+            "C16", "%s: no raw TLC log %s next to the result JSON" % (rel, log_path),
+            "re-run the cfg with run_tlc.sh --out; it writes both files",
+        )
+    log_text = read_text(log_path)
+    if LOG_VERSION_BANNER not in log_text or os.path.basename(resolved["spec"]) not in log_text:
+        return None, error(
+            "C16", "%s: %s is not a TLC log of %s (no TLC version banner or spec name)"
+            % (rel, os.path.relpath(log_path, ctx.repo), os.path.basename(resolved["spec"])),
+            "re-run the cfg with run_tlc.sh --out; it writes both files",
+        )
+    extra_args = _c16_extra_args(tokens)
+    try:
+        replayed = tlc_report.build_result(
+            log_text, resolved["cfg"], data.get("exit_code") or 0, 0, None,
+            data.get("result") == "timeout", None, resolved["spec"], "-deadlock" in extra_args,
+            None,
+        )
+    except Exception as e:
+        return None, error(
+            "C16", "%s: result JSON cannot be replayed from its TLC log (%s: %s)"
+            % (rel, type(e).__name__, e),
+            "the JSON was edited after the run; re-run the cfg with run_tlc.sh",
+        )
+    for key in ("result", "violated", "distinct_states", "constants"):
+        if replayed.get(key) != data.get(key):
+            return None, error(
+                "C16",
+                "%s: result JSON does not match its own TLC log (json %s=%r, log %s=%r)"
+                % (rel, key, data.get(key), key, replayed.get(key)),
+                "the JSON was edited after the run; re-run the cfg with run_tlc.sh",
+            )
+    return {
+        "data": data, "tokens": tokens, "extra_args": extra_args, "spec": resolved["spec"],
+        "cfg": resolved["cfg"],
+    }, None
+
+
+def check_c16_static(ctx):
+    issues = []
+    for path, info in cited_results(ctx).items():
+        _details, issue = _c16_inspect(ctx, path, info)
+        if issue:
+            issues.append(issue)
+    return issues
+
+
+def _c16_exec_groups(ctx):
+    groups = {}
+    for path, info in cited_results(ctx).items():
+        if not info["cited"]:
+            continue
+        details, issue = _c16_inspect(ctx, path, info)
+        if issue or (details["data"].get("result") != "pass"
+                     and details["data"].get("result") not in VIOLATION_RESULTS):
+            continue
+        key = (os.path.realpath(details["spec"]), os.path.realpath(details["cfg"]),
+               tuple(details["extra_args"]))
+        groups.setdefault(key, []).append((path, info, details))
+    return groups
+
+
+def _c16_workers(tokens):
+    if "--workers" in tokens:
+        i = tokens.index("--workers")
+        if i + 1 < len(tokens) and tokens[i + 1].isdigit():
+            return tokens[i + 1]
+    return "auto"
+
+
+def _c16_rerun_limit(elapsed, workers):
+    factor = int(workers) if workers.isdigit() else (os.cpu_count() or 1)
+    return min(1800, max(120, int(4 * elapsed * max(1, factor)) + 1))
+
+
+def _c16_number(value):
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+
+def check_c16_exec(ctx):
+    issues = []
+    toolchain_reported = False
+    for (spec, cfg, extra_args), members in _c16_exec_groups(ctx).items():
+        _path, _info, first = members[0]
+        stored_elapsed = _c16_number(first["data"].get("elapsed_seconds"))
+        workers = _c16_workers(first["tokens"])
+        limit = _c16_rerun_limit(stored_elapsed, workers)
+        tmpdir = tempfile.mkdtemp(prefix="check_run_tlc_")
+        out_json = os.path.join(tmpdir, "rerun.json")
+        try:
+            cmd = [RUN_TLC_SH, spec, cfg, "--out", out_json, "--quiet", "--workers",
+                   workers, "--timeout", str(limit)]
+            if extra_args:
+                cmd += ["--"] + list(extra_args)
+            rc, out, err, timed_out = run_shell(ctx.repo, shlex.join(cmd), limit + 60)
+            rerun, load_err = (load_json(out_json) if os.path.isfile(out_json)
+                               else (None, "no result JSON written"))
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        if rerun is None and not timed_out:
+            if not toolchain_reported:
+                toolchain_reported = True
+                detail = (err or out or load_err or "").strip().splitlines()
+                issues.append(error(
+                    "C16", "cannot re-verify TLC results: run_tlc.sh failed to start (%s)"
+                    % (detail[-1][:200] if detail else "exit %s" % rc),
+                    "install Java 17+ and tla2tools (scripts/check_toolchain.sh), or pass "
+                    "--no-exec to downgrade this to a WARNING",
+                ))
+            continue
+        rel_cfg = os.path.relpath(first["cfg"], ctx.repo)
+        for path, info, details in members:
+            who = ", ".join(info["labels"]) or os.path.relpath(path, ctx.repo)
+            stored = details["data"]
+            if timed_out or rerun.get("result") == "timeout":
+                issues.append(error(
+                    "C16", "%s: re-run did not finish within %ds (stored elapsed %.1fs)"
+                    % (who, limit, stored_elapsed),
+                    "shrink the model so it re-checks quickly, or re-run on an idle machine",
+                ))
+                continue
+            fields = ["result"]
+            if stored.get("result") == "pass":
+                fields.append("distinct_states")
+            else:
+                fields += ["violated", "violated_candidates"]
+            for field in fields:
+                if rerun.get(field) != stored.get(field):
+                    issues.append(error(
+                        "C16", "%s: re-running %s gives %s=%r, stored %r"
+                        % (who, rel_cfg, field, rerun.get(field), stored.get(field)),
+                        "the stored result does not describe the current spec/cfg; run "
+                        "verification/rerun.sh and copy results from the new JSON",
+                    ))
+                    break
+    return issues
+
+
+def c16_skipped_warning(ctx):
+    return warn(
+        "C16",
+        "--no-exec was given; C16 did not re-run the %d cited TLC cfg(s)"
+        % len(_c16_exec_groups(ctx)),
+        "run check_run.py without --no-exec before trusting this run",
+    )
+
+
 STATIC_CHECKS = [
     check_c01, check_c02, check_c03, check_c04, check_c05, check_c06, check_c07,
-    check_c08, check_c09, check_c12, check_c13, check_c14, check_c15,
+    check_c08, check_c09, check_c12, check_c13, check_c14, check_c15, check_c16_static,
 ]
-EXEC_CHECKS = [check_c10, check_c11]
+EXEC_CHECKS = [check_c10, check_c11, check_c16_exec]
 
 
 def print_text(issues):
@@ -1726,11 +2323,11 @@ def main():
             print_text([issue])
         return 1
 
-    clean, sanitize_issues = sanitize(raw)
-    data, norm_issues = normalize(clean)
-    ctx = Context(repo, data)
+    issues = check_c01_raw(raw)
+    clean, sanitize_issues = sanitize(raw if isinstance(raw, dict) else {})
+    ctx = Context(repo, clean)
 
-    issues = list(sanitize_issues) + list(norm_issues)
+    issues.extend(sanitize_issues)
     for check in STATIC_CHECKS:
         issues.extend(check(ctx))
     if not args.no_exec:
@@ -1743,6 +2340,8 @@ def main():
             "skipped",
             "run check_run.py without --no-exec before trusting this run",
         ))
+        issues.append(c16_skipped_warning(ctx))
+    issues.sort(key=lambda i: (i["check"], i["level"]))
 
     if args.json:
         print(json.dumps(issues, indent=2))

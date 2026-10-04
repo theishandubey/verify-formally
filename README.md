@@ -75,7 +75,7 @@ Every property passes a vacuity check: a mutant that should break it does, and s
 **Reproduce.** Each counterexample becomes a test that drives the real code along the trace, injecting only environment choices, and fails for the reason the trace predicts.
 Results are classified as CONFIRMED, NEEDS-DECISION (the behavior may be intended), MODEL-ONLY, BY-DESIGN, or OUT-OF-SCOPE.
 
-**Vet and report.** The advisor re-checks every cited line, re-runs every repro, audits fix models, and then runs `check_run.py`, a validator that fails the run if a repro does not fail on the current code with an assertion, a TLA+ property lacks matching mutant and sanity results, results are stale or not clean, a status is outside the closed set, or source files changed.
+**Vet and report.** The advisor re-checks every cited line, re-runs every repro, audits fix models, and then runs `check_run.py`, a validator that fails the run if a repro does not fail on the current code with an assertion, a TLA+ property lacks matching mutant and sanity results, results are stale or not clean, a result JSON was not produced by `run_tlc.sh` (its log must replay, and every cited pass or violation cfg is re-run and compared), a status is outside the closed set, or source files changed.
 
 **Plan.** One self-contained plan per fix, written for the weakest plausible executor, with verification gates, STOP conditions, and a drift check.
 Done means the repro passes, the suite passes, and the model with the plan's fix flag on passes its properties at the same bounds.
@@ -116,7 +116,7 @@ The checker scripts decide what counts as "pass" and "proved", so they are teste
 
 ```bash
 tests/test_scripts.sh      # run_tlc.sh and lean_audit.sh: 95 cases over adversarial TLA+ and Lean fixtures
-tests/test_check_run.sh    # check_run.py: 47 cases, a generated run and variants built to fool it
+tests/test_check_run.sh    # check_run.py: 100 cases, a generated run and variants built to fool it
 ```
 
 `tests/test_check_run.sh` uses the worked example's virtualenv; run the example once first to create it.

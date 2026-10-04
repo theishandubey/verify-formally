@@ -51,9 +51,11 @@ def drain(queue, stop_after):
     return leased_here
 EOF
 
-git add demo/worker.py
+printf '.venv\n' > .gitignore
+git add demo/worker.py .gitignore
 git commit -q -m "add job drain loop"
 commit_sha="$(git rev-parse HEAD)"
+ln -s "$(dirname "$(dirname "$venv_python")")" .venv
 
 mkdir -p verification/models/job-drain/mutants verification/models/job-drain/sanity \
   verification/models/job-drain/results verification/repro verification/lean plans
@@ -148,6 +150,14 @@ CONSTANTS
   MutantNoRelease = FALSE
 EOF
 
+mkdir -p verification/models/retry-budget/results verification/models/shutdown-drain/results
+sed 's/MODULE Syntax/MODULE RetryBudget/' "$here/../tlc/Syntax.tla" \
+  > verification/models/retry-budget/RetryBudget.tla
+cp "$here/../tlc/Syntax.cfg" verification/models/retry-budget/RetryBudget.cfg
+sed 's/MODULE Pass/MODULE ShutdownDrain/' "$here/../tlc/Pass.tla" \
+  > verification/models/shutdown-drain/ShutdownDrain.tla
+cp "$here/../tlc/Pass.cfg" verification/models/shutdown-drain/ShutdownDrain.cfg
+
 run_tlc="$scripts_dir/run_tlc.sh"
 model_dir="verification/models/job-drain"
 set +e
@@ -161,6 +171,12 @@ set +e
   --out "$model_dir/results/SanityAlwaysDraining.json" --quiet
 "$run_tlc" "$model_dir/JobDrain.tla" "$model_dir/sanity/SanityAlwaysDrainingFixed.cfg" \
   --out "$model_dir/results/SanityAlwaysDrainingFixed.json" --quiet
+"$run_tlc" verification/models/retry-budget/RetryBudget.tla \
+  verification/models/retry-budget/RetryBudget.cfg \
+  --out verification/models/retry-budget/results/RetryBudget.json --quiet
+"$run_tlc" verification/models/shutdown-drain/ShutdownDrain.tla \
+  verification/models/shutdown-drain/ShutdownDrain.cfg \
+  --out verification/models/shutdown-drain/results/ShutdownDrain.json --quiet
 set -e
 
 cat > verification/models/job-drain/CORRESPONDENCE.md <<'EOF'
@@ -282,6 +298,8 @@ Baseline: \`$test_command\` -> 0 passed; lint: not run.
 
 ## Not modeled (coverage gaps)
 
+- retry-budget: first spec draft does not parse; abandoned within the budget.
+- shutdown-drain: passing run has no vacuity check and no CORRESPONDENCE.md; supports no claim.
 - everything except demo/worker.py: this is a minimal fixture, not a real run.
 
 ## Re-running
@@ -399,7 +417,25 @@ data = {
                     },
                 },
             ],
-        }
+        },
+        {
+            "id": "retry-budget",
+            "title": "Retry budget reset",
+            "files": ["demo/worker.py"],
+            "tools": ["tla"],
+            "status": "not_modeled",
+            "reason": "first spec draft does not parse; abandoned within the budget",
+            "properties": [],
+        },
+        {
+            "id": "shutdown-drain",
+            "title": "Shutdown drain ordering",
+            "files": ["demo/worker.py"],
+            "tools": ["tla"],
+            "status": "not_modeled",
+            "reason": "passing run has no vacuity check and no CORRESPONDENCE.md; supports no claim",
+            "properties": [],
+        },
     ],
     "findings": [
         {
