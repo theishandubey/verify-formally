@@ -212,6 +212,8 @@ check_commit="$(git -C "$check_work" rev-parse HEAD)"
 
 cp -Rp "$here/verification" "$check_work/verification"
 cp -Rp "$here/plans" "$check_work/plans"
+# git checkout gives files arbitrary mtimes, so committed results can look older than their specs/cfgs.
+find "$check_work/verification/models" -path '*/results/*' -type f -exec touch {} +
 ln -s "$venv" "$check_work/.venv"
 
 python3 - "$check_work" "$check_commit" <<'PYEOF'
