@@ -77,6 +77,10 @@ A property can be vacuous at one bound set and not at another (with one worker a
 ## 3. Checker and toolchain pitfalls
 
 - A TLC run is a result only when `run_tlc.sh` says `pass`; `pass_with_warnings`, `timeout`, `error`, and `vacuous` are not results.
+- A result JSON you wrote or edited is not a result; `check_run.py` re-runs every cited pass or violation cfg and replays every other result against the TLC log beside it, which must carry TLC's banner and the spec name, while the result's `command` must name the same spec and cfg as its `spec` and `cfg` fields.
+- A cfg that cannot re-check within min(1800s, max(120s, 4 x its original elapsed time x workers)) fails the run; keep models small enough.
+  A command without a numeric `--workers` (the default, auto) counts as the machine's core count.
+- A target is modeled only when a TLA+ property has a `violated` or `no_violation_within_bounds` result, or a Lean property is `proved` (or `violated` by a proved negation theorem listed in `verification/lean/results.json`); a spec that never produced a checked property is an attempt, so list it as `not_modeled`.
 - TLC's temporal-violation message does not name the property: check one `PROPERTY` per run when attribution matters.
 - Do not pass `-continue`, `-simulate`, or `-generate`; `run_tlc.sh` rejects them because they make runs non-exhaustive or keep going past violations.
 - `lake build` succeeds with `sorry`; only `lean_audit.sh` decides "proved".

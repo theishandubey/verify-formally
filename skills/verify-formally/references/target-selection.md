@@ -28,10 +28,12 @@ So look for code whose behavior depends on **combinations and orderings** of eve
 
 - `git log --oneline -40` and `git log --format='%h %s' -- <file>`: fix commits cluster in fragile code.
   A file with several recent "fix(...)" commits in its exception paths is a top candidate, because the remaining paths were written by the same reasoning.
-- **Is each fix still there?** For the recent fix commits in candidate files, read the commit's diff (`git show <sha> -- <file>`) and check the current code still contains the fix.
-  A fix that a later refactor, revert, or merge resolution dropped is a regression waiting to be confirmed, and the fix commit's message and test tell you the property and its source.
+- **Is each fix still there?** For each recent fix commit in a candidate file, run `git show <sha> -- <file>` and check that every line the diff added still exists in the current code (grep each added line; a renamed variable counts as present if the logic is).
+  A fix that is present is not a target by itself.
+  A fix with a missing line, or whose accompanying test was weakened or deleted, is the strongest lead there is: the commit message and test state the property and its source.
 - **Merges hide changes.** `git log -p` shows merge commits without a diff; use `git log --first-parent -p`, `git show --cc <merge>`, or `git diff <merge>^1 <merge> -- <file>` to see what a merge changed, including edits made while resolving conflicts.
 - Tests that were removed (`git log --diff-filter=D --stat -- tests/`, or a test named in a fix commit that no longer exists) often mark behavior that is no longer protected.
+- **Passing tests are not evidence.** A property is covered only by a named test that asserts it at the exact boundary (the Nth attempt, the limit value itself, the interrupt at that step); list that test or treat the target as untested, and never dismiss a target because the suite is green.
 - Grep for `while True`, `finally:`, `except KeyboardInterrupt`, `except Exception`, `BaseException`, `threading.Lock`, `ThreadPoolExecutor`, `asyncio`, `await`, `timeout`, `retry`, `signal.`, `subprocess`, `Popen`, `.kill(`, `limit`, `max_`, `status =`, `state =`, `mode =`.
   In TypeScript: `Promise.race`, `AbortController`, `setTimeout`, `for await`, `finally`, `.catch(`, `EventEmitter`, `queueMicrotask`, `Mutex`.
 - Comments that argue about correctness ("can't happen", "should never", "must be called before", "keep in sync with") mark invariants someone was worried about.
@@ -60,7 +62,8 @@ Tiebreakers, in order:
 
 ## Stating the property
 
-Write the property before any model, in the form the code's users would care about, and record its **source**:
+Write the property before any model, in the form the code's users would care about, and record its **source**.
+For budgets, limits, and guards, derive the boundary from intent before reading the guard ("max_attempts = N allows exactly N attempts, the N+1th is refused") and then compare the code to it; the comparison is where off-by-ones show, and a property read off the guard cannot find them.
 
 | Source | Example | Strength |
 |---|---|---|

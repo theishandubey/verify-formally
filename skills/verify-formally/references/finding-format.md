@@ -114,6 +114,15 @@ The mutants that make each property fail, and the sanity cfgs that confirmed rea
           "vacuity": {"status": "passed", "mutants": ["retry_budget_mutant_false"], "sanity": ["example witnesses for all hypotheses"]}
         }
       ]
+    },
+    {
+      "id": "shutdown-drain",
+      "title": "Queue drain on shutdown",
+      "files": ["jobrunner/drain.py"],
+      "tools": ["tla"],
+      "status": "not_modeled",
+      "reason": "TLC timed out at the smallest useful bounds; spec and result kept under verification/models/shutdown-drain/",
+      "properties": []
     }
   ],
   "findings": [
@@ -159,6 +168,18 @@ The mutants that make each property fail, and the sanity cfgs that confirmed rea
 ```
 
 Field rules:
+- `targets[]` lists the selected targets: every target the run committed to model (top 3 by default).
+  A `modeled` target has at least one TLA+ property whose `result` is `violated` or `no_violation_within_bounds`, or a Lean property that is `proved` or `violated` by a proved negation theorem listed in `verification/lean/results.json`; a property that is only `unproved`, `vacuous`, or `not_checked` does not make a target modeled, and a Lean property never uses `no_violation_within_bounds`.
+  A Lean property may cite only theorems of its own target: the theorem name or its module in `verification/lean/results.json` must mention the target id (ignoring case and punctuation).
+  A `not_modeled` entry is an attempt: it has a non-empty `reason` and keeps its `.tla` and at least one `run_tlc.sh` `results/*.json` on disk, or for a Lean-only target a `.lean` file under `verification/lean/` that names the target (in its path or contents) and a parseable `verification/lean/results.json` with a `result` field.
+  Every run except `reconcile` needs at least one modeled target, a `reconcile` run lists at least one target, and a scoped run's named path or symbol must be covered by a modeled target's `files`.
+  Ranked candidates that were not selected go in README "Targets considered" and `coverage_gaps`, not in `targets[]`.
+- `invocation` is the command exactly as given; annotations go in `defaults_taken`.
+  A scoped run names its target by an existing file path or a dotted symbol (`/verify-formally src/worker.py`, `/verify-formally Worker.drain`), and a modeled target's `files` must cover it (if a symbol is not found as a definition in the target's files, name the file path instead); any other free text is read as a full run, which lists at least 3 selected targets.
+- Result JSONs under `results/` are written only by `run_tlc.sh --out`, which also writes `<stem>.log` beside them, and the log must carry TLC's banner and the spec name, while the result's `command` names the same spec and cfg as its `spec` and `cfg` fields.
+  `check_run.py` re-runs every cited `pass` or violation cfg and replays every other result (and every attempt) against its log, so an edited or hand-written result fails the run.
+  A cited cfg that cannot re-check within min(1800s, max(120s, 4 x its original elapsed time x workers)) fails, so keep the models small enough.
+  A command without a numeric `--workers` (the default, auto) counts as the machine's core count.
 - `baseline.repro_runner` is run from the repo root by `check_run.py`, per test id (`file::test`), in one of two forms:
   - pytest: a command prefix such as `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -p no:cacheprovider`; `check_run.py` appends the `file::test` id plus `--junitxml` and `--tb=long`.
   - Any other runner: a command containing `{file}`, `{test}` and/or `{dir}` placeholders, which `check_run.py` substitutes (shell-quoted) from the test id: the file path, the test name, and the file's directory.
@@ -177,6 +198,8 @@ Field rules:
 - A property with `vacuity.status` other than `passed` cannot support any finding or any "no violation" claim.
 
 ## 4. `verification/README.md`
+
+When the last `check_run.py` did not exit 0, line 1 of the file is exactly `INCOMPLETE`, followed by the validator output in a fenced block, above `# Verification`; omit both when it exited 0.
 
 ```markdown
 # Verification

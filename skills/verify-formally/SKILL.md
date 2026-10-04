@@ -43,11 +43,17 @@ A complete worked example (code, TLA+ spec, Lean model, repro test, fix, vacuity
 
 A run is finished only when `scripts/check_run.py <repo>` exits 0.
 It checks items 2 to 5 mechanically; items 1, 6, and 7 are on you, and an exit 0 does not prove them.
+If it does not exit 0 when you must stop, the first line of your reply and of `verification/README.md` is INCOMPLETE, followed by the validator output verbatim (in the README, a fenced block above `# Verification`); never describe such a run as complete, and never argue a WARNING or ERROR away in prose.
 
 1. **Code reading is recon, not a result.**
-   Never conclude that code is correct or buggy from reading it; only checker results and repro tests count, and a target you only read is "not modeled".
+   Never conclude that code is correct or buggy from reading it; only checker results and repro tests count, and a target you only read is a coverage gap, not a result.
+   A green test suite is not evidence either: a property counts as covered only when a named test asserts it at the exact boundary, regressions often ship with that test weakened or deleted, and no passing suite dismisses a target.
 2. **Every selected target gets a model and checker runs.**
-   A full run models at least 3 targets (or records why fewer in `fewer_targets_reason`).
+   A full run selects at least 3 targets and lists each in `targets[]`; a scoped run (`/verify-formally <path-or-dotted-symbol>`) lists its named target there.
+   A target counts as modeled only when one of its properties has a checked result (TLA+: `violated` or `no_violation_within_bounds`; Lean: `proved`, or `violated` by a proved negation theorem).
+   A target you abandon stays listed as `not_modeled` with a reason and its attempt on disk: a TLA+ spec plus its `run_tlc.sh` result, or for a Lean-only target a `.lean` file naming the target plus `verification/lean/results.json`.
+   `fewer_targets_reason` says why fewer than 3 were modeled.
+   Any run except `reconcile` with no modeled target is INCOMPLETE.
    A repro test alone is not a finding, however convincing.
 3. **A repro test asserts the correct behavior and FAILS on the current code, with an assertion failure that names the property.**
    Example for a job that must be released on shutdown: `assert queue.state(job) == "released", "LeasesReleased violated: ..."` (fails today because the job stays leased).
@@ -74,7 +80,7 @@ If your environment only lets you write elsewhere, stop and say so.
 If you were started as a subagent, background task, or batch job, or the invocation says `non-interactive`, you are not: never wait for input, take the documented defaults, and record each default you took in the "Defaults taken" section of `verification/README.md`.
 
 **Cost:** a full run is typically one to two hours and several hundred thousand tokens per modeled target; `quick` is a fraction of that.
-Spend the budget on depth for the top targets, not on breadth.
+Spend the budget on depth for the top targets, not on breadth; when it runs short, finish target 1 completely (model, vacuity, repro) before starting target 2, and report INCOMPLETE rather than skip modeling.
 
 ## Workflow
 
@@ -93,7 +99,7 @@ Map the territory before judging it:
   If none exists and running tests needs one, create it only in the conventional ignored location (`.venv/`, `node_modules/`) and say so; if the user is present and installation is heavy, ask first.
 - Read intent and design docs: ADRs, design notes, `docs/` pages about control flow or lifecycle, docstrings on the state machines you will model.
   Documented intent is how you later tell a bug from a design choice, and it tells you what the properties should be.
-- Read the history (commands in [references/target-selection.md](references/target-selection.md)): recent fix commits cluster in fragile code, and **a fix commit whose change is no longer in the code** (dropped by a later refactor or a merge) is one of the strongest leads there is.
+- Read the history (procedure in [references/target-selection.md](references/target-selection.md)): for each recent fix commit, check that every line its diff added is still in the code; a fix that is present is not a target by itself (do not spend the run confirming it), and a fix that is missing, or whose test was weakened or deleted, is the strongest lead there is.
   Look at merge commits with `git show --cc` or `git diff <merge>^1 <merge>` too; changes made during a merge resolution do not show in `git log -p`.
 - Run `scripts/check_toolchain.sh` (add `--tla-only` for quick mode).
   It prints the resolved paths of `java`, `lake`, and `lean`; use those paths, since they may not be on `PATH`.
@@ -114,6 +120,7 @@ Poor targets: UI layout, formatting, glue code, anything whose correctness is "l
 
 Every candidate names a **concrete property** in plain words ("every job the worker leases is acked or released before the worker exits") and its **source**: a doc sentence, an API contract, an existing test, a code comment, a commit message, or `inferred` when you derived it yourself.
 A target without a statable property is not a target.
+For a budget, limit, or guard, write the expected boundary behavior from intent first (name, docs, tests, commit messages: "max_attempts = N allows exactly N attempts"), then compare the code to it; a property copied from the guard can only confirm the guard.
 Related budgets in one loop (step, cost, and error caps) are one target, not three.
 
 Ask the user which targets to model (default suggestion: the top 3).
@@ -131,7 +138,7 @@ For each selected target choose the tool:
 
 Before writing any model, read [references/correspondence.md](references/correspondence.md).
 Every model lives in `verification/models/<target-slug>/` and ships with a `CORRESPONDENCE.md` that maps every variable, action, guard, and constant to `file:line`, lists every abstraction with its justification, and states which direction each abstraction errs (over-approximation causes spurious traces; under-approximation hides real bugs).
-If you cannot relate the model to the code clearly enough to write `CORRESPONDENCE.md`, stop modeling that target and report it as a coverage gap.
+If you cannot relate the model to the code clearly enough to write `CORRESPONDENCE.md`, stop modeling that target and report it as `not_modeled` with that reason, and as a coverage gap.
 
 Model the code as it is, not as it should be.
 When you suspect a specific defect, add a boolean constant per suspected defect (`FixReleaseOnSignal`) that switches the model to the corrected behavior; buggy, fixed, and mutant models are then the same spec with different cfg files.
@@ -140,8 +147,11 @@ An idealized fix ("the output is simply never lost") passes and proves nothing a
 
 ### Phase D - Check
 
-- **TLA+:** run `scripts/run_tlc.sh <Spec.tla> <cfg> --out <results/<cfg-stem>.json> --quiet`.
+- **TLA+:** run `scripts/run_tlc.sh <Spec.tla> <cfg> --out <results/<cfg-stem>.json> --quiet --timeout <seconds>` in the foreground, one run at a time; never start a checker in the background or leave one running (a run that finishes after you report rewrites its result).
   Record `result`, `constants` (the bounds), `distinct_states`, and `depth`; the JSON also carries the exact `command` for re-running.
+  Never write or edit a result JSON or log by hand: only `run_tlc.sh` output counts, because `check_run.py` re-runs every cited pass or violation cfg and replays every other result against its log, so a hand-written or edited result fails.
+  Every cited cfg must re-check within min(1800s, max(120s, 4 x its original elapsed time x workers)), so keep the models small enough.
+  A command without a numeric `--workers` (the default, auto) counts as the machine's core count.
   Only `pass` is clean; `pass_with_warnings`, `vacuous`, `error`, and `timeout` are not passes and must be resolved.
   Check safety invariants always, and liveness (with explicit fairness) whenever the target has a "must eventually" requirement (termination, progress, response).
 - **Lean:** `scripts/lean_audit.sh verification/lean --out verification/lean/results.json --quiet`.
@@ -200,8 +210,9 @@ Read [references/finding-format.md](references/finding-format.md) and write:
 - `verification/findings.json`, the machine-readable index (schema in finding-format.md).
 - `verification/README.md`, the human index, from the template in finding-format.md.
 
-Then run `scripts/check_run.py <repo>` and fix every ERROR it reports (it runs each repro and guard test, so allow a few minutes); repeat until it exits 0.
-Then present to the user, including the validator's final output:
+Then run `scripts/check_run.py <repo>` and fix every ERROR it reports (it re-runs every cited pass or violation cfg, replays the other results against their logs, and runs every repro and guard test, so allow several minutes or more); repeat until it exits 0.
+If it is not exit 0, the first line of the reply and of `verification/README.md` is INCOMPLETE, followed by the validator output verbatim (in the README, a fenced block above `# Verification`).
+Then present to the user, with the validator's final output pasted verbatim:
 
 | # | Finding | Target | Tool | Status | Severity | Repro test | Evidence |
 
@@ -239,7 +250,7 @@ If the host cannot spawn subagents, run the targets sequentially yourself.
 | `/verify-formally` | Full run: recon, ranked targets, user picks (default top 3), model with the fitting tool, safety + liveness where relevant, reproduce, vet, report, plan. |
 | `/verify-formally quick` | One target (the top-ranked), TLA+ only, safety invariants only, small bounds, no subagents; still requires vacuity and repro. |
 | `/verify-formally deep` | Every ranked target with score above the cut, both tools where they fit, liveness with fairness, larger bounds (and a second bound set to show stability). |
-| `/verify-formally <path-or-symbol>` | Skip ranking; model that one target (still state the property and its source first). |
+| `/verify-formally <path-or-dotted-symbol>` | Skip ranking; model that one target, named by an existing path or a dotted symbol such as `Worker.drain` (still state the property and its source first); a bare word or other free text is read as a full run. |
 | `/verify-formally tla <target>` / `/verify-formally lean <target>` | Force the tool. |
 | `/verify-formally repro <finding>` | Retry reproducing a MODEL-ONLY entry: re-read the code, refine the model or the test, re-classify. |
 | `/verify-formally reconcile` | Re-check existing models against current code: run the drift check on every `CORRESPONDENCE.md`, update line references, run `rerun.sh` and the repro tests, and update statuses (a CONFIRMED finding whose repro now passes becomes FIXED, not deleted). |

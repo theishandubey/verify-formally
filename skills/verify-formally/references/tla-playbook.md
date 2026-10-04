@@ -152,6 +152,8 @@ A mutant `.tla` in `mutants/` is a separate spec; give it its own directory or a
 - Report bounds and distinct-state counts with every result.
   In `deep` mode, run a second, larger bound set and report both; a result that holds at two bound sets is more credible than one.
 - If TLC runs for more than 10 minutes, the model is too detailed; abstract data rather than lowering the control bounds below the interesting depth.
+  `check_run.py` re-runs every cited cfg and fails one that cannot re-check within min(1800s, max(120s, 4 x its original elapsed time x workers)).
+  A command without a numeric `--workers` (the default, auto) counts as the machine's core count.
 
 ## 5. Liveness
 
@@ -183,6 +185,7 @@ scripts/run_tlc.sh verification/models/<t>/Spec.tla verification/models/<t>/Spec
 
 Name each result after its cfg (`results/<cfg-stem>.json`, with a `sanity-` or `mutant-` prefix for those directories); the JSON records the spec, the cfg, and the re-run `command`.
 With `--workers 2` or more, a run that stops at a violation can report a different state count and even a different trace each time; use `--workers 1` for every run whose trace or count you cite (and in `rerun.sh`), and keep more workers for large passing runs.
+Run every TLC in the foreground with `--timeout`; a checker left running in the background can overwrite a result after you have reported it.
 
 | `result` | Meaning | What to do |
 |---|---|---|
