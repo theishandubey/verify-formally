@@ -65,6 +65,10 @@ Model the exception class hierarchy explicitly where it matters (a subclass is c
 For `KeyboardInterrupt`, `CancelledError`, abort signals, or timeouts that can fire at any point, add an interrupt disjunct to every action that corresponds to an interruptible point, guarded by a budget (`nint < MaxInterrupts`) so the state space stays finite.
 Pay special attention to the points "after the append, before the return" and "after the print, before the append": that is where paired state gets separated.
 
+**Windows no fix can close.**
+Modeled literally, an interrupt can also land in the first bytecodes of a handler (between entering `except` and its `killpg`, or inside `finally` before the cleanup call), and no Python-level fix closes that window; the standard library has the same one.
+Do not let such a window make every fix fail, and do not drop it silently either: put it behind an explicit assumption constant (`HandlerWindow`), set it `FALSE` in the cfgs that support the claims, keep one cfg with it `TRUE` whose violation documents the residual window, and state the assumption in the property's bounds and in `CORRESPONDENCE.md` (Abstractions, "errs toward under-approximation").
+
 **Environment choices as disjunctions.**
 Model replies, user input, subprocess outcomes, network failures: each is a disjunct (or `\E x \in S:`) inside the action where the code receives it.
 Cover every behavior the real environment can produce (over-approximate); a spurious trace is cheap to rule out later, a missing behavior hides bugs silently.

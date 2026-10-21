@@ -4,7 +4,8 @@
 # --code also lists the code-level verifiers run_code_check.py drives (cbmc, esbmc, kani, jbmc,
 # crosshair, hypothesis); each is optional and reported as "absent" with an install hint, since
 # a run needs only the one that fits the target's language. --code-only skips TLA+ and Lean and
-# exits 1 unless at least one code-level verifier is present.
+# exits 1 unless at least one code-level verifier is present. The Python verifiers are probed
+# in VERIFY_PYTHON, else ./.venv/bin/python (run from the repository root), else python3.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,7 +19,7 @@ for arg in "$@"; do
     --code) need_code=1 ;;
     --code-only) need_tla=0; need_lean=0; need_code=1 ;;
     --json) json=1 ;;
-    -h|--help) sed -n 2,7p "$0"; exit 0 ;;
+    -h|--help) sed -n 2,9p "$0"; exit 0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
@@ -40,7 +41,7 @@ record_code() {
 
 if [ "$need_tla" = 1 ]; then
   if java="$(resolve_java)"; then
-    record java ok "$java" "$("$java" -version 2>&1 | head -1)"
+    record java ok "$java" "$("$java" -version 2>&1 | grep -v '^Picked up ' | head -1)"
   else
     record java missing "" "install Java 17+ (macOS: brew install openjdk@17; Debian: apt install openjdk-17-jre-headless) or set JAVA=/path/to/java"
   fi
@@ -99,17 +100,17 @@ if [ "$need_code" = 1 ]; then
   [ -n "$p" ] && kv="$(cargo kani --version 2>/dev/null | head -1)"
   record_code kani "${kv:+$p}" "$kv" \
     "Rust: cargo install --locked kani-verifier && cargo kani setup"
-  p="$(command -v crosshair 2>/dev/null || true)"
-  cv=""
-  if [ -n "$p" ]; then
-    cpy="$(head -1 "$p" 2>/dev/null | sed -n 's/^#! *//p' | awk '{print $1}')"
-    cv="$("${cpy:-python3}" -c 'from importlib.metadata import version; print("crosshair-tool " + version("crosshair-tool"))' 2>/dev/null)"
-  fi
-  record_code crosshair "${cv:+$p}" "$cv" \
-    "Python: pip install crosshair-tool (into the project's virtualenv)"
-  hv="$(python3 -c 'from importlib.metadata import version; print("hypothesis " + version("hypothesis"))' 2>/dev/null)"
-  record_code hypothesis "${hv:+$(command -v python3)}" "$hv" \
-    "Python: pip install hypothesis pytest (into the project's virtualenv; check the venv's python, not this one)"
+  # The Python verifiers run inside the project's environment: probe VERIFY_PYTHON, else
+  # ./.venv/bin/python when run from the repository root, else python3.
+  vpy="${VERIFY_PYTHON:-}"
+  [ -z "$vpy" ] && [ -x .venv/bin/python ] && vpy="$(pwd)/.venv/bin/python"
+  [ -z "$vpy" ] && vpy="$(command -v python3)"
+  cv="$("$vpy" -c 'from importlib.metadata import version; print("crosshair-tool " + version("crosshair-tool"))' 2>/dev/null)"
+  record_code crosshair "${cv:+$vpy}" "$cv" \
+    "Python: pip install crosshair-tool into the project's virtualenv (probed: $vpy; set VERIFY_PYTHON)"
+  hv="$("$vpy" -c 'from importlib.metadata import version as v; print("hypothesis %s, pytest %s" % (v("hypothesis"), v("pytest")))' 2>/dev/null)"
+  record_code hypothesis "${hv:+$vpy}" "$hv" \
+    "Python: pip install hypothesis pytest into the project's virtualenv (probed: $vpy; set VERIFY_PYTHON)"
 fi
 
 if py="$(command -v python3)"; then

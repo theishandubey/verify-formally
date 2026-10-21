@@ -30,8 +30,11 @@
 # the tracked and untracked-but-not-ignored files; .venv, venv and node_modules are symlinked
 # in. The patch may touch only files outside verification/ and plans/ (it mutates the real
 # code, never the harness), and it must apply cleanly. Every occurrence of the repository's
-# absolute path in the command is rewritten to the copy's path. The real repository is never
-# written. The JSON "mutant" field records the patch path, its sha256, and the files it changes.
+# absolute path in the command is rewritten to the copy's path. For crosshair and hypothesis,
+# the copy's src/ (when present) and root are put first on PYTHONPATH, so an editable install
+# in the symlinked virtualenv does not import the unpatched original. The real repository is
+# never written. The JSON "mutant" field records the patch path, its sha256, and the files it
+# changes.
 #
 # Flags that switch checks off, change the output format the parser reads, or make a run
 # non-exhaustive are rejected per tool (for example CBMC/ESBMC/Kani --no-* flags, CBMC
@@ -355,6 +358,12 @@ def main():
             usage_error(err)
         run_cwd = os.path.join(copy, os.path.relpath(cwd, repo))
         run_argv = [a.replace(repo, copy) for a in command]
+        if args.tool in ("crosshair", "hypothesis"):
+            # The symlinked virtualenv may hold an editable install of the project that
+            # points at the original tree; put the patched copy first on the import path.
+            first = [d for d in (os.path.join(copy, "src"), copy) if os.path.isdir(d)]
+            env["PYTHONPATH"] = os.pathsep.join(
+                first + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
 
     header = "%s tool=%s" % (code_report.HEADER_PREFIX, args.tool)
     version = tool_version(args.tool, run_argv, run_cwd, env)

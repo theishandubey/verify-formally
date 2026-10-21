@@ -228,6 +228,8 @@ Field rules:
 - `locations` point at the code that must change for the fix, most important first.
 - Every CONFIRMED finding has `repro_tests`, `repro_command`, and `evidence` copied from an actual run, and `fix_check` says whether the fix was `observed` in a prototype or `predicted` by the fixed model.
 - A property with `vacuity.status` other than `passed` cannot support any finding or any "no violation" claim.
+- Vacuity entries differ by lane: a TLA+ property cites `"<mutants|sanity>/<Name>.cfg: <result>"` strings (resolved to `results/mutant-<Name>.json` and `results/sanity-<Name>.json`); a Lean property cites theorem names or prose; a code property cites `run_code_check.py` result JSON paths.
+  A violated TLA+ property with no passing run lists sanity entries and may leave `mutants` empty.
 
 ## 4. `verification/README.md`
 

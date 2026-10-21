@@ -56,6 +56,7 @@ Never install one without the user's say-so when the user is present; if none is
 **Exhaustive or not.**
 A bounded model checker (CBMC, ESBMC, Kani, JBMC) that passes with every unwinding assertion holding covers every path of the harness within its input domain: report `no_violation_within_bounds` with the bounds.
 CrossHair covers every path only when it says so for every condition ("Confirmed over all paths"); otherwise, like Hypothesis, it is a search that found nothing: report `no_counterexample_found`, never "verified".
+Expect no confirmation for string-heavy code, parsing (`json.loads`, regexes), or deep library calls: CrossHair explores those paths but cannot exhaust them, so budget for `no_counterexample_found` and use its runtime (minutes per run) on contracts where a counterexample is plausible.
 `run_code_check.py` sets `exhaustive` accordingly, and `check_run.py` refuses `no_violation_within_bounds` for a non-exhaustive run.
 
 ## 3. Write the harness
@@ -80,6 +81,7 @@ The harness lives in `verification/models/<slug>/` and is the only new code; the
   CrossHair: `--per_condition_timeout` and `--per_path_timeout` set the budget; record them.
   Hypothesis: `@settings(max_examples=...)`; record it.
 - **Make the target importable or compilable from the harness directory** without editing the repo: an include path (`-I src`), a path dependency, or `sys.path` set inside the harness module.
+  For Python, import from the repository's own tree (`sys.path.insert(0, <repo>/src)` in the harness), not from whatever the virtualenv has installed: `run_code_check.py --mutant` puts the patched copy first on `PYTHONPATH`, but a harness that imports an installed copy by another route would test the unpatched code (the mutant then "passes", and vacuity fails).
 - **Name harness files so the project's normal tests do not collect them**: `harness_<slug>.c`, `contracts_<slug>.py`, `prop_<slug>.py` (pytest's default discovery skips files not named `test_*.py` or `*_test.py`).
 - **Rust harnesses live in their own crate** under `verification/models/<slug>/kani/`, depending on the real crate by path (`[dependencies] target = { path = "../../../.." }`), because a `#[kani::proof]` inside the real crate would be an edit to its `src/`.
   Such a harness reaches only the crate's public API; a private function is checked through its public callers, or recorded as a coverage gap.

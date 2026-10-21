@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # Usage: render_diagram.py <repo-root> [--out verification/state-diagram.html] [--timeout SECONDS]
+#                          [--text]
 #
 # Writes one self-contained HTML page with a state diagram for every target that has a
 # verification/models/<id>/diagram.json (targets without one are left out; check_run.py C18
@@ -29,6 +30,9 @@
 #    "highlight": [{"name": "001 double release", "path": ["idle", "busy", "idle"],
 #                   "violated": "NoDoubleFree"}]}
 # Every state and transition of a manual diagram cites a file:line.
+#
+# --text also prints every diagram as plain text (numbered states, transitions, highlighted
+# paths), for reviewing the drawing where no browser is available.
 #
 # The page embeds <script type="application/json" id="vf-diagram-meta"> with the commit, the
 # generator, and for each target the sha256 of every input file; check_run.py uses it to tell
@@ -706,6 +710,38 @@ def target_section(tid, title, spec, graph, overlays, error, actions):
     return "".join(out)
 
 
+def text_summary(tid, spec, graph, overlays, error):
+    """The diagram as plain text, for reviewing it where no browser is available."""
+    lines = ["== %s (%s)" % (tid, (spec or {}).get("kind") if isinstance(spec, dict) else "?")]
+    if error:
+        return "\n".join(lines + ["  ERROR: %s" % error])
+    single = len(graph["project"]) == 1
+    lines.append("  projected on: %s" % ", ".join(graph["project"]))
+    names = {}
+    for i, (key, node) in enumerate(graph["nodes"].items()):
+        names[key] = "S%d" % (i + 1)
+        flags = [f for f, on in (("start", key in graph["initial"]),
+                                 ("final", node.get("terminal") and node.get("count")),
+                                 ("trace only", node.get("trace_only"))) if on]
+        lines.append("  %s %s%s%s" % (
+            names[key], fmt_key(key, single),
+            "  x%d" % node["count"] if node.get("count", 0) > 1 else "",
+            "  [%s]" % ", ".join(flags) if flags else ""))
+    order = {key: i for i, key in enumerate(graph["nodes"])}
+    for (a, b), acts in sorted(graph["edges"].items(), key=lambda e: (order[e[0][0]],
+                                                                       order[e[0][1]])):
+        lines.append("  %s -> %s: %s" % (names[a], names[b],
+                                         ", ".join(sorted(x for x in acts if x)) or "step"))
+    for ov in overlays:
+        path = [names.get(ov["keys"][0], "?")] + [
+            "%s%s" % ("(%s) " % lab if lab else "", names.get(b, "?"))
+            for _a, b, lab in ov["steps"]]
+        lines.append("  highlighted %s%s: %s" % (
+            ov["name"], " (violates %s)" % ov["violated"] if ov.get("violated") else "",
+            " -> ".join(path)))
+    return "\n".join(lines)
+
+
 def load_targets(repo):
     findings = os.path.join(repo, "verification", "findings.json")
     order, titles = [], {}
@@ -787,6 +823,9 @@ def main():
     ap.add_argument("repo_root")
     ap.add_argument("--out", default=None)
     ap.add_argument("--timeout", type=int, default=300)
+    ap.add_argument("--text", action="store_true",
+                    help="also print each diagram as text (states, transitions, highlighted "
+                         "paths), for review without a browser")
     args = ap.parse_args()
     repo = os.path.abspath(args.repo_root)
     if not os.path.isdir(os.path.join(repo, "verification")):
@@ -802,6 +841,8 @@ def main():
         spec, graph, overlays, err, hashes = build_target(repo, tid, args.timeout)
         if err:
             failures.append("%s: %s" % (tid, err))
+        if args.text:
+            print(text_summary(tid, spec, graph, overlays, err))
         sections.append(target_section(tid, titles.get(tid), spec, graph, overlays, err,
                                        (spec or {}).get("actions") or {}))
         meta_targets.append({

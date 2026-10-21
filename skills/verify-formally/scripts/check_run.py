@@ -42,7 +42,8 @@
 #   C06  each tla property's runs[] point at real, current, matching result JSON, inside the
 #        target's own directory, and a "violated" claim is backed by a run that actually
 #        violated that property by name (not a different invariant, not a bare deadlock)
-#   C07  each tla property's vacuity check (mutants + sanity) is real and non-vacuous
+#   C07  each tla property's vacuity check (mutants + sanity) is real and non-vacuous; a
+#        violated property with no passing run needs sanity results but no mutant
 #   C08  a lean property claiming "proved" is backed by verification/lean/results.json, and each
 #        cited theorem is proved there and belongs to the citing target (name or module
 #        mentions the target id)
@@ -1162,8 +1163,14 @@ def check_c07(ctx):
                     "C07", "%s: vacuity.status=%r, not 'passed'" % (tag, vac.get("status")),
                     "fix the property or model until vacuity passes before reporting it",
                 ))
+            run_infos = _resolve_run_infos(ctx, prop)
+            # A violated property with no passing run (no fixed model: a NEEDS-DECISION
+            # property, or one without a planned fix) is falsified by its own violating run;
+            # it needs no mutant. Any passing run needs a mutant against a non-buggy config.
+            violated_only = prop.get("result") == "violated" and not any(
+                info["data"] and info["data"].get("result") == "pass" for info in run_infos)
             mutants = vac.get("mutants") or []
-            if not mutants:
+            if not mutants and not violated_only:
                 issues.append(error("C07", "%s: vacuity.mutants is empty" % tag,
                                      "add at least one falsifiability mutant under mutants/"))
             sanity = vac.get("sanity") or []
@@ -1171,7 +1178,6 @@ def check_c07(ctx):
                 issues.append(error("C07", "%s: vacuity.sanity is empty" % tag,
                                      "add at least one sanity invariant under sanity/"))
 
-            run_infos = _resolve_run_infos(ctx, prop)
             buggy_cfg_real = None
             for info in run_infos:
                 if info["data"] and info["data"].get("result") in VIOLATION_RESULTS:
@@ -1256,7 +1262,7 @@ def check_c07(ctx):
                 if buggy_cfg_real is not None and mutant_cfg_real == buggy_cfg_real:
                     continue
                 counted.append(entry)
-            if violating and not counted:
+            if violating and not counted and not violated_only:
                 issues.append(error(
                     "C07",
                     "%s: every vacuity mutant uses the same cfg as the buggy run (mutant "
@@ -2780,7 +2786,8 @@ def check_c18(ctx):
                            "is at %r" % (meta.get("commit"), ctx.findings.get("commit")),
                            render + " so the page names the commit it describes"))
     by_id = {e.get("id"): e for e in meta.get("targets") or [] if isinstance(e, dict)}
-    readme = read_text(os.path.join(ctx.repo, "verification", "README.md")) or ""
+    readme_path = os.path.join(ctx.repo, "verification", "README.md")
+    readme = read_text(readme_path) if os.path.isfile(readme_path) else ""
     if "state-diagram.html" not in readme:
         issues.append(warn("C18", "verification/README.md does not link state-diagram.html",
                            "link the page from the README so a reader finds the diagrams"))
@@ -2864,7 +2871,8 @@ def check_c19(ctx):
     issues = []
     head, _ = git_head(ctx.repo)
     head = (head or "").strip()
-    readme = read_text(os.path.join(ctx.repo, "verification", "README.md")) or ""
+    readme_path = os.path.join(ctx.repo, "verification", "README.md")
+    readme = read_text(readme_path) if os.path.isfile(readme_path) else ""
     if "Reconcile" not in readme:
         issues.append(error("C19", "verification/README.md has no 'Reconcile' section",
                             "add '## Reconcile' with each target's outcome, the commits read, "
@@ -3100,6 +3108,9 @@ def main():
         print(json.dumps(issues, indent=2))
     else:
         print_text(issues)
+        n_err = sum(1 for i in issues if i["level"] == "ERROR")
+        print("check_run.py: %s, %d error(s), %d warning(s)"
+              % ("FAIL" if n_err else "OK", n_err, len(issues) - n_err))
 
     return 1 if any(i["level"] == "ERROR" for i in issues) else 0
 

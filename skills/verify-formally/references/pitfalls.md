@@ -18,7 +18,8 @@ Before reporting any result for a property, do all three:
    - flip the fix flag off (if the fixed model passes, the buggy model must fail);
    - add a transition the code does not have (skip the finally block, return early).
    Put mutants in `mutants/` (a cfg that flips a constant, run against the parent spec; or a copied spec with exactly one change when a constant cannot express it) and record each mutant and its result.
-   For a TLA+ property that already fails on the buggy model, the buggy run is the falsifiability evidence; the fixed model then needs its own mutant, and that mutant must break the property by a **different mechanism** than turning the fix flag off: weaken one part of the fix (`>` instead of `>=` in the fix's guard, its new append skipped on one path, its check split so it is no longer atomic).
+   For a TLA+ property that already fails on the buggy model, the buggy run is the falsifiability evidence: a violated property with no fixed model (a NEEDS-DECISION property, or one with no planned fix) needs sanity invariants but no mutant, and never a re-run of the buggy cfg posing as one.
+   When the property also has a fixed model, the fixed model needs its own mutant, and that mutant must break the property by a **different mechanism** than turning the fix flag off: weaken one part of the fix (`>` instead of `>=` in the fix's guard, its new append skipped on one path, its check split so it is no longer atomic).
    Re-enabling the known bug only shows what the buggy run already showed.
    For a property that only exists in the fixed code (it talks about behavior the fix adds), the mutant breaks one element of the fix itself (the new record is written with the wrong value, the new check is skipped on one path).
 2. **Reachability (the model does what you think).**
@@ -27,7 +28,7 @@ Before reporting any result for a property, do all three:
    A property over states that never occur is trivially true.
    Run each sanity invariant in its own cfg under `sanity/` (TLC stops at the first violation, so sharing a cfg hides the others), with the same constants as the property it supports; reachability at larger bounds says nothing about the bounds you report.
 3. **Non-trivial state space.**
-   `distinct_states` greater than the number of `pc` values, and the depth greater than one pass through the loop.
+   For a model with a loop, `distinct_states` greater than the number of `pc` values and the depth greater than one pass through the loop; a straight-line function's model can be smaller than its `pc` count, and there the mutant and sanity checks carry the weight.
    `run_tlc.sh` reports `vacuous` for zero states and for a cfg that checks nothing (no invariant, no property, deadlock checking off).
    Under a `VIEW`, count view states instead; a handful is normal for a small loop, so rely on the mutant and sanity checks there.
 4. **Independent ground truth.**

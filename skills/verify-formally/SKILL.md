@@ -97,9 +97,10 @@ Map the territory before judging it:
 - Read `README`, `AGENTS.md`/`CLAUDE.md`, `CONTRIBUTING`, root manifests (`pyproject.toml`, `package.json`, `go.mod`, `Cargo.toml`), CI config, and the directory layout.
 - Identify the exact **test command**, how to run a single test file, and the lint/format commands.
   Run the suite once for a baseline (pass/fail/skip counts) and the lint check once (its baseline, too, since plans must not be blamed for pre-existing lint failures).
+  Run the baseline without fail-fast flags (`-x`): an aborted run gives no counts and still counts toward the limit below; a test that fails only under parallel runs (`-n`) is recorded as flaky with the command that shows it.
   These commands become the gates in every finding and plan.
   If the suite cannot run, record why; repro tests still need a way to run, so find the narrowest command that works (one file, one test) and say what is broken.
-  Run the full suite at most twice per run (baseline and final); it may be slow or use shared resources.
+  Run the full suite at most twice per run (baseline and final; skip the final run when nothing outside `verification/` and `plans/` changed, and say so); it may be slow or use shared resources.
   Everywhere else use single-file runs or the runner's collect/list mode.
 - Use the project's existing environment (virtualenv, `node_modules`) if one exists.
   If none exists and running tests needs one, create it only in the conventional ignored location (`.venv/`, `node_modules/`) and say so; if the user is present and installation is heavy, ask first.
@@ -177,11 +178,12 @@ An idealized fix ("the output is simply never lost") passes and proves nothing a
   For Lean, prove the property fails for a mutated step function or a concrete counterexample, and instantiate every hypothesis with a witness.
   For a code-level pass, a sanity harness must fail and a patch that breaks the real code must be caught (`run_code_check.py --mutant`; code-level-playbook section 4).
   A property whose vacuity check fails is `VACUOUS`: fix the property or the model, never report it.
-- Keep every cfg that produced a result, save every checker output under `verification/models/<target>/results/`, and write `verification/rerun.sh` that re-runs every cfg, every code-level check, and the Lean audit, and ends with `render_diagram.py`.
+- Keep every cfg that produced a result, save every checker output under `verification/models/<target>/results/`, delete `results/<stem>.json` and `.log` when you rename or remove the cfg or check that wrote them (the validator checks every result file there), and write `verification/rerun.sh` that re-runs every cfg, every code-level check, and the Lean audit, and ends with `render_diagram.py`.
   After any edit to a spec or harness, run `rerun.sh` again; results from an older spec are stale.
 - **State diagram:** run `scripts/render_diagram.py <repo>` after the last change to any spec, cfg, result, or `diagram.json`.
   It writes `verification/state-diagram.html` with one diagram per target (the TLA+ ones derived from TLC's reachable state graph, projected onto the variables in `diagram.json`) and each highlighted counterexample drawn as numbered steps.
   Open the page once and check the drawing reads as the system you modeled: a missing state or an edge the code cannot take is a modeling error to fix before reporting.
+  Without a browser, `render_diagram.py <repo> --text` prints the same diagrams as numbered states, transitions, and highlighted paths.
 
 ### Phase E - Reproduce
 
