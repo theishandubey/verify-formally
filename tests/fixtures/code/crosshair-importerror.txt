@@ -1,0 +1,13 @@
+Could not import your code:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/dist-packages/crosshair/fnutil.py", line 260, in load_by_qualname
+    raise ModuleNotFoundError(f"No module named '{cur_module_name}'")
+ModuleNotFoundError: No module named 'nosuch'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/dist-packages/crosshair/fnutil.py", line 263, in load_by_qualname
+    raise NotFound(f"Module '{cur_module_name}' was not found") from exc
+crosshair.fnutil.NotFound: Module 'nosuch' was not found

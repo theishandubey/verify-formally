@@ -1,0 +1,25 @@
+ESBMC version 7.6.1 64-bit x86_64 linux
+Parsing rb.c
+Starting Bounded Model Checking
+Solving with solver Boolector 3.2.3
+Runtime decision procedure: 0.001s
+Building error trace
+
+[Counterexample]
+
+
+State 1 file rb.c line 5 column 52 function harness thread 0
+----------------------------------------------------
+  head = 0 (00000000 00000000 00000000 00000000)
+
+State 5 file rb.c line 3 column 19 function push thread 0
+----------------------------------------------------
+Violated property:
+  file rb.c line 3 column 19 function push
+  array bounds violated: array `buf' upper bound
+  (signed long int)head < 4
+
+
+VERIFICATION FAILED
+
+Bug found (k = 5)

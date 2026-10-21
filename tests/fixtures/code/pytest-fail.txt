@@ -1,0 +1,27 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________________________________ test_bad ___________________________________
+
+    @settings(derandomize=True)
+>   @given(st.integers(0, 10))
+                   ^^^
+
+prop_x.py:10: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+i = 7
+
+    @settings(derandomize=True)
+    @given(st.integers(0, 10))
+    def test_bad(i):
+>       assert i < 7, "Bound violated: i=%d" % i
+E       AssertionError: Bound violated: i=7
+E       assert 7 < 7
+E       Failing test case: test_bad(
+E           i=7,
+E       )
+
+prop_x.py:12: AssertionError
+=========================== short test summary info ============================
+FAILED prop_x.py::test_bad - AssertionError: Bound violated: i=7
+1 failed in 0.21s

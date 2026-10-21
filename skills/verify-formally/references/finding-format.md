@@ -23,7 +23,7 @@ One file per CONFIRMED finding.
 - **Status**: CONFIRMED
 - **Severity**: high | medium | low - <one-sentence realistic trigger; name any other bound that limits the damage>
 - **Targets**: <slug> (`verification/models/<slug>/`)<, <slug2>>
-- **Tools**: TLA+ | Lean | both
+- **Tools**: TLA+ | Lean | code-level (<verifier>) | a combination
 - **Properties violated**: `<Name>` - <plain words> (source: <doc/test/comment/commit location>)<; `<Name2>` ...>
 - **Location**: `path/file.py:NN-MM` (the code that causes it), plus `path/other.py:NN` for each contributing site
 - **Commit**: `<full SHA>`
@@ -45,6 +45,8 @@ The model trace, condensed to the steps that matter, each with its code location
 3. ...
 
 Checker: `<command from the result JSON>`, constants `MaxBatch=2, MaxSignals=2`, about 180 distinct states, depth 9, result `invariant_violation` of `LeasesSettled`.
+For a code-level finding: the verifier, the harness, the bounds, the failing check ids, and the concrete input from the counterexample.
+The state diagram (`verification/state-diagram.html#t-<slug>`) shows this path highlighted.
 
 ## Reproduction
 
@@ -112,6 +114,28 @@ The mutants that make each property fail, and the sanity cfgs that confirmed rea
           "theorems": [{"name": "Verification.Retry.retry_budget", "status": "proved"}, {"name": "Verification.Retry.retry_budget_mutant_false", "status": "proved"}],
           "scope": "unbounded, over the counter/guard abstraction in CORRESPONDENCE.md",
           "vacuity": {"status": "passed", "mutants": ["retry_budget_mutant_false"], "sanity": ["example witnesses for all hypotheses"]}
+        }
+      ]
+    },
+    {
+      "id": "frame-buffer",
+      "title": "Frame buffer bounds in the C decoder",
+      "files": ["native/frame.c"],
+      "tools": ["code"],
+      "status": "modeled",
+      "properties": [
+        {
+          "name": "FrameWritesInBounds",
+          "kind": "memory_safety",
+          "statement": "frame_append never writes outside frame->buf for any sequence of up to 6 appends of up to 8 bytes",
+          "source": "native/frame.h:12: 'appends past capacity are truncated'",
+          "tool": "code",
+          "verifier": "cbmc",
+          "harness": "verification/models/frame-buffer/harness_frame_buffer.c",
+          "bounds": "--unwind 9; 6 appends, each len <= 8, any byte values; CAP = 16 as compiled",
+          "result": "no_violation_within_bounds",
+          "runs": [{"json": "verification/models/frame-buffer/results/Harness.json", "result": "pass"}],
+          "vacuity": {"status": "passed", "mutants": ["verification/models/frame-buffer/results/mutant-drop-truncate.json"], "sanity": ["verification/models/frame-buffer/results/sanity-Harness.json"]}
         }
       ]
     },
@@ -188,9 +212,15 @@ Field rules:
   - A runner that is neither pytest nor contains a placeholder is rejected (C10 ERROR).
   - For placeholder runners the output must name each test it runs (`go test -v`, `vitest --reporter=verbose`), and a repro's failure output must name the violated property.
 - `baseline.collect_command` lists what the normal suite collects (`... -m pytest --collect-only -q`); its output must not mention `verification/repro`.
-- Finding `status` is exactly one of `CONFIRMED`, `NEEDS-DECISION`, `MODEL-ONLY`, `BY-DESIGN`, `OUT-OF-SCOPE`, `FIXED` (set only by `reconcile`); property `tool` is exactly `tla` or `lean`; target `status` is exactly `modeled` or `not_modeled`.
+- Finding `status` is exactly one of `CONFIRMED`, `NEEDS-DECISION`, `MODEL-ONLY`, `BY-DESIGN`, `OUT-OF-SCOPE`, `FIXED` (set only by `reconcile`); property `tool` is exactly `tla`, `lean`, or `code`; target `status` is exactly `modeled` or `not_modeled`.
+- A `code` property names its `verifier` (the `--tool` given to `run_code_check.py`), its `harness` (a file under the target directory), and its `bounds` (unwind depth, input domain, search budget).
+  `runs[]` cite `run_code_check.py` result JSONs on the unmodified code (`{"json", "result"}`, result copied from the JSON); `vacuity.mutants` cite `--mutant` runs and `vacuity.sanity` cite sanity-harness runs, as result JSON paths, and each must be a `violation`.
+  `no_violation_within_bounds` needs every cited run to be an exhaustive pass; a non-exhaustive pass (Hypothesis, or CrossHair with an unconfirmed condition) is `no_counterexample_found`; a code property is never `proved`.
+  `check_run.py` replays every code-level result against its log and re-runs every cited one.
+- Every modeled target has `verification/models/<id>/diagram.json`, and `verification/state-diagram.html` is rendered from the current inputs by `render_diagram.py` (references/state-diagram.md).
+- A reconcile run records `targets[].reconcile` for every target (references/reconcile.md section 4), and a CONFIRMED finding found by reconcile names `introduced_by`, the full SHA of the commit that introduced the bug.
 - `baseline.dirty_files` lists the paths `git status --porcelain` showed before the run started (empty for a clean tree); `check_run.py` ignores changes to exactly those paths.
-- Property `result`: `violated`, `no_violation_within_bounds`, `proved` (Lean, audit `proved`), `unproved`, `vacuous`, `not_checked` (with a reason in `note`).
+- Property `result`: `violated`, `no_violation_within_bounds`, `no_counterexample_found` (code-level, non-exhaustive), `proved` (Lean, audit `proved`), `unproved`, `vacuous`, `not_checked` (with a reason in `note`).
 - Lean `theorems[].status` is copied from the audit: `proved`, `unproved`, or `kernel_unverified` (not proved).
 - `runs[].constants`, `distinct_states`, and `cfg` are copied from the result JSON, never typed by hand; `exact_states` is false for violating runs with more than one worker.
 - `locations` point at the code that must change for the fix, most important first.
@@ -207,6 +237,7 @@ When the last `check_run.py` did not exit 0, line 1 of the file is exactly `INCO
 Generated by the verify-formally skill on <date> at commit `<SHA>` (<clean | dirty>).
 Invocation: `<invocation>`.
 Baseline: `<test command>` -> <counts>; lint: `<command>` -> <result>.
+State diagrams: [state-diagram.html](state-diagram.html).
 
 ## Defaults taken
 
@@ -242,9 +273,14 @@ The full ranked table from target selection, including rejected candidates with 
 
 - <area>: <reason>.
 
+## Reconcile
+
+(reconcile runs only; references/reconcile.md section 5)
+- <target>: <outcome>, <from SHA>..<to SHA>, commits read: <list>; changes: <one line each, with evidence for a promise change>; before -> after results; break used: <mutant>; bugs: <steps, harm, introducing commit>; stale passes: <list>.
+
 ## Re-running
 
-`verification/rerun.sh` re-runs every cfg and the Lean audit; repro tests run with `<command>`.
+`verification/rerun.sh` re-runs every cfg, every code-level check, and the Lean audit, then re-renders the state diagrams; repro tests run with `<command>`.
 ```
 
 ## 5. Subagent result: `verification/models/<slug>/RESULT.md`
@@ -254,7 +290,7 @@ Subagents write this file before replying, and reply with the same content:
 ```
 TARGET: <slug>
 PROPERTIES:
-- <name> (<kind>, <tool>, source: <...>): <result>; bounds <constants>; states <n>; vacuity <passed|failed> via <mutant> and <sanity cfgs>
+- <name> (<kind>, <tool>, source: <...>): <result>; bounds <constants or unwind/input domain>; states <n>; vacuity <passed|failed> via <mutant> and <sanity cfgs or harnesses>
 FIX FLAGS:
 - <flag>: models <exact code change>; <cfg> -> <result>
 COUNTEREXAMPLES:
@@ -262,6 +298,7 @@ COUNTEREXAMPLES:
   REPRO: <test id> via `<command>` -> <fails|passes>; failure: <one line>
   CLASSIFICATION: CONFIRMED | NEEDS-DECISION | MODEL-ONLY | BY-DESIGN | OUT-OF-SCOPE (<evidence>)
 GUARD TESTS: <ids> -> pass
+DIAGRAM: diagram.json kind <tla|manual>, projected on <variables>
 FILES WRITTEN: <list>
 OPEN QUESTIONS: <anything the advisor must decide>
 ```

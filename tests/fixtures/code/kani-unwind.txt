@@ -1,0 +1,218 @@
+Kani Rust Verifier 0.68.0 (cargo plugin)
+CBMC 6.11.0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.00s
+warning: use of an unstable feature
+ --> <crate attribute>:1:12
+  |
+1 | #![feature(register_tool)]
+  |            ^^^^^^^^^^^^^
+  |
+  = note: requested on the command line with `--force-warn unstable-features`
+
+warning: Found the following unsupported constructs:
+             - caller_location (1)
+             - foreign function (1)
+         
+         Verification will fail if one or more of these constructs is reachable.
+         See https://model-checking.github.io/kani/rust-feature-support.html for more details.
+
+Checking harness proofs::check_loop...
+CBMC 6.11.0 (cbmc-6.11.0)
+CBMC version 6.11.0 (cbmc-6.11.0) 64-bit x86_64 linux
+Reading GOTO program from file rk/target/kani/x86_64-unknown-linux-gnu/debug/build/rk/2a37b20767bb7e1a/out/rk-2a37b20767bb7e1a__RNvNtCsjxkfKhSxv6J_2rk6proofs10check_loop.out
+Generating GOTO Program
+Adding CPROVER library (x86_64)
+Removal of function pointers and virtual functions
+Generic Property Instrumentation
+Running with 16 object bits, 48 offset bits (user-specified)
+Starting Bounded Model Checking
+Unwinding loop _RNvNtCsjxkfKhSxv6J_2rk6proofs10check_loop.0 iteration 1 file src/lib.rs line 8 column 65 function proofs::check_loop thread 0
+Unwinding loop _RNvNtCsjxkfKhSxv6J_2rk6proofs10check_loop.0 iteration 2 file src/lib.rs line 8 column 65 function proofs::check_loop thread 0
+Not unwinding loop _RNvNtCsjxkfKhSxv6J_2rk6proofs10check_loop.0 iteration 3 file src/lib.rs line 8 column 65 function proofs::check_loop thread 0
+Runtime Symex: 0.0163842s
+size of program expression: 716 steps
+slicing removed 555 assignments
+Generated 73 VCC(s), 1 remaining after simplification
+Runtime Postprocess Equation: 0.000118098s
+Passing problem to propositional reduction
+converting SSA
+Runtime Convert SSA: 0.00113995s
+Running propositional reduction
+Post-processing
+Runtime Post-process: 7.546e-06s
+Solving with CaDiCaL 3.0.0
+1081 variables, 1088 clauses
+SAT checker: instance is SATISFIABLE
+Runtime Solver: 8.8441e-05s
+Runtime decision procedure: 0.00133782s
+
+RESULTS:
+Check 1: std::option::Option::<i32>::unwrap_unchecked.unreachable.1
+	 - Status: UNDETERMINED
+	 - Description: "unreachable code"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1127:15 in function std::option::Option::<i32>::unwrap_unchecked
+
+Check 2: std::hint::unreachable_unchecked.unreachable.1
+	 - Status: UNDETERMINED
+	 - Description: "unreachable code"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/hint.rs:111:14 in function std::hint::unreachable_unchecked
+
+Check 3: std::panic::Location::<'_>::caller.unsupported_construct.1
+	 - Status: UNDETERMINED
+	 - Description: "caller_location is not currently supported by Kani. Please post your example at https://github.com/model-checking/kani/issues/374"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/panic/location.rs:181:9 in function std::panic::Location::<'_>::caller
+
+Check 4: std::fmt::Arguments::<'_>::from_str.assertion.1
+	 - Status: UNDETERMINED
+	 - Description: "attempt to shift left with overflow"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/fmt/mod.rs:820:38 in function std::fmt::Arguments::<'_>::from_str
+
+Check 5: proofs::check_loop.unreachable.1
+	 - Status: UNDETERMINED
+	 - Description: "unreachable code"
+	 - Location: src/lib.rs:8:74 in function proofs::check_loop
+
+Check 6: core::panicking::panic_nounwind_fmt::runtime.unsupported_construct.1
+	 - Status: UNDETERMINED
+	 - Description: "call to foreign "Rust" function `_RNvCskSgPeDzUGbv_7___rustc17rust_begin_unwind` is not currently supported by Kani. Please post your example at https://github.com/model-checking/kani/issues/new/choose"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/panicking.rs:110:17 in function core::panicking::panic_nounwind_fmt::runtime
+
+Check 7: std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt.pointer_dereference.1
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: pointer NULL"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cmp.rs:2192:50 in function std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt
+
+Check 8: std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt.pointer_dereference.2
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: pointer invalid"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cmp.rs:2192:50 in function std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt
+
+Check 9: std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt.pointer_dereference.3
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: deallocated dynamic object"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cmp.rs:2192:50 in function std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt
+
+Check 10: std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt.pointer_dereference.4
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: dead object"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cmp.rs:2192:50 in function std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt
+
+Check 11: std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt.pointer_dereference.5
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: pointer outside object bounds"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cmp.rs:2192:50 in function std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt
+
+Check 12: std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt.pointer_dereference.6
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: invalid integer address"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cmp.rs:2192:50 in function std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt
+
+Check 13: std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt.pointer_dereference.7
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: pointer NULL"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cmp.rs:2192:59 in function std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt
+
+Check 14: std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt.pointer_dereference.8
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: pointer invalid"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cmp.rs:2192:59 in function std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt
+
+Check 15: std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt.pointer_dereference.9
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: deallocated dynamic object"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cmp.rs:2192:59 in function std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt
+
+Check 16: std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt.pointer_dereference.10
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: dead object"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cmp.rs:2192:59 in function std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt
+
+Check 17: std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt.pointer_dereference.11
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: pointer outside object bounds"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cmp.rs:2192:59 in function std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt
+
+Check 18: std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt.pointer_dereference.12
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: invalid integer address"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cmp.rs:2192:59 in function std::cmp::impls::<impl std::cmp::PartialOrd for i32>::lt
+
+Check 19: <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.1
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: pointer NULL"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/range.rs:1101:23 in function <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next
+
+Check 20: <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.2
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: pointer invalid"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/range.rs:1101:23 in function <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next
+
+Check 21: <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.3
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: deallocated dynamic object"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/range.rs:1101:23 in function <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next
+
+Check 22: <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.4
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: dead object"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/range.rs:1101:23 in function <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next
+
+Check 23: <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.5
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: pointer outside object bounds"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/range.rs:1101:23 in function <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next
+
+Check 24: <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.6
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: invalid integer address"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/range.rs:1101:23 in function <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next
+
+Check 25: <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.7
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: pointer NULL"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/range.rs:1103:13 in function <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next
+
+Check 26: <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.8
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: pointer invalid"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/range.rs:1103:13 in function <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next
+
+Check 27: <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.9
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: deallocated dynamic object"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/range.rs:1103:13 in function <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next
+
+Check 28: <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.10
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: dead object"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/range.rs:1103:13 in function <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next
+
+Check 29: <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.11
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: pointer outside object bounds"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/range.rs:1103:13 in function <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next
+
+Check 30: <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.12
+	 - Status: UNDETERMINED
+	 - Description: "dereference failure: invalid integer address"
+	 - Location: ../../../../../../../home/runner/.rustup/toolchains/nightly-2026-08-21-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/range.rs:1103:13 in function <std::ops::Range<i32> as std::iter::range::RangeIteratorImpl>::spec_next
+
+Check 31: proofs::check_loop.unwind.0
+	 - Status: FAILURE
+	 - Description: "unwinding assertion loop 0"
+	 - Location: src/lib.rs:8:65 in function proofs::check_loop
+
+
+SUMMARY:
+ ** 1 of 31 failed (30 undetermined)
+Failed Checks: unwinding assertion loop 0
+ File: "src/lib.rs", line 8, in proofs::check_loop
+
+VERIFICATION:- FAILED
+[Kani] info: Verification output shows one or more unwinding failures.
+[Kani] tip: Consider increasing the unwinding value or disabling `--unwinding-assertions`.
+Verification Time: 0.0479941s
+
+Manual Harness Summary:
+Verification failed for - proofs::check_loop
+Complete - 0 successfully verified harnesses, 1 failures, 1 total.

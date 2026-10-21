@@ -81,7 +81,7 @@
   ],
   "tlc_version": "2.19",
   "tla2tools_release": "1.7.4",
-  "elapsed_seconds": 0.148,
+  "elapsed_seconds": 0.499,
   "raw_log": "verification/models/retry-guard/results/mutant-RetryGuardFixedMutant.log",
   "exit_code": 12,
   "spec": "verification/models/retry-guard/RetryGuard.tla",

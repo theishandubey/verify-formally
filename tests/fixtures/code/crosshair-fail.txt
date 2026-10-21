@@ -1,0 +1,1 @@
+mod.py:4: error: false when calling clamp_index(1, 1) (which returns 1)

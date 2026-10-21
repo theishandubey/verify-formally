@@ -22,7 +22,10 @@ So look for code whose behavior depends on **combinations and orderings** of eve
 - **Concurrency.** Shared counters or files touched from a thread pool, check-then-act, locks held around some accesses but not others, reads outside the lock, callbacks that can run twice, futures completed from two places.
 - **Subprocess and timeout handling.** What a timeout or cancellation actually stops, what keeps running, what keeps resources open, and whether cleanup runs on every exit path.
 - **Parsers and validators** with crisp pre/post conditions: "every accepted input round-trips", "every input is either parsed completely or rejected with an error".
-  These suit Lean.
+  These suit Lean, or a code-level verifier on the real parser.
+- **Memory-unsafe and arithmetic-heavy code.** C/C++ buffer and pointer arithmetic, length and index computations, `memcpy`/`strncpy` sizes, ring buffers and pools, integer conversions between widths and signedness, allocation-failure paths, `unsafe` blocks and `unwrap`/indexing in Rust.
+  Look for a size computed in one place and trusted in another, a `+ 1` for a terminator, a check on one path but not its sibling, and arithmetic on lengths that came from input.
+  These suit a code-level verifier (code-level-playbook.md), which checks the real code for every input up to a bound.
 
 ## Risk signals (how to find candidates fast)
 
@@ -34,6 +37,7 @@ So look for code whose behavior depends on **combinations and orderings** of eve
 - **Merges hide changes.** `git log -p` shows merge commits without a diff; use `git log --first-parent -p`, `git show --cc <merge>`, or `git diff <merge>^1 <merge> -- <file>` to see what a merge changed, including edits made while resolving conflicts.
 - Tests that were removed (`git log --diff-filter=D --stat -- tests/`, or a test named in a fix commit that no longer exists) often mark behavior that is no longer protected.
 - **Passing tests are not evidence.** A property is covered only by a named test that asserts it at the exact boundary (the Nth attempt, the limit value itself, the interrupt at that step); list that test or treat the target as untested, and never dismiss a target because the suite is green.
+- In C/C++/Rust grep for `memcpy`, `strcpy`, `strncpy`, `sprintf`, `alloca`, `malloc(` with arithmetic in the size, `[i + 1]`, `len - 1`, `(int)`/`as u32` casts, `unsafe`, `unwrap()`, `get_unchecked`, `from_raw_parts`.
 - Grep for `while True`, `finally:`, `except KeyboardInterrupt`, `except Exception`, `BaseException`, `threading.Lock`, `ThreadPoolExecutor`, `asyncio`, `await`, `timeout`, `retry`, `signal.`, `subprocess`, `Popen`, `.kill(`, `limit`, `max_`, `status =`, `state =`, `mode =`.
   In TypeScript: `Promise.race`, `AbortController`, `setTimeout`, `for await`, `finally`, `.catch(`, `EventEmitter`, `queueMicrotask`, `Mutex`.
 - Comments that argue about correctness ("can't happen", "should never", "must be called before", "keep in sync with") mark invariants someone was worried about.
@@ -79,6 +83,7 @@ When sources disagree (a docstring says "consecutive failures", a commit says "a
 - Safety: "Never X" or "Whenever P, Q holds" - "every leased job is acked or released before the worker exits", "attempts never exceed max_errors + max_timeouts", "an ack says 'done' only if the job's command ran".
 - Liveness: "Eventually X" under stated fairness - "the worker loop terminates for every environment behavior", "every submitted job is eventually reported".
 - Functional (Lean): "for all inputs, f(x) satisfies P" - "parse returns exactly one record or raises", "the counter update never decreases the total budget".
+- Code-level: "for every input up to a bound, the real function has no memory error, overflow, or panic, and meets its contract" - "`ring_push` never writes outside `buf` for any sequence of up to 6 operations", "`parse_header` returns an offset inside the input for every input of up to 16 bytes".
 
 If the property needs ground truth the code does not store (did the command actually run?), keep that ground truth in the model; truthfulness properties depend on it.
 
@@ -87,7 +92,7 @@ If the property needs ground truth the code does not store (did the command actu
 - UI layout, string formatting, logging content, templating output.
 - Thin glue over a library where all the logic is in the library.
 - Anything whose only spec is "looks right" or "matches the snapshot".
-- Numerical code where the risk is precision (use property-based tests instead).
+- Numerical code where the risk is precision (use property-based tests instead; the `hypothesis` lane records them, but never as a proof).
 - Code you cannot drive from a test without editing it (no seam for the environment choices); note it as a coverage gap with the missing seam.
 
 ## The ranked table

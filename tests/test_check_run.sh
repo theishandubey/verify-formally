@@ -163,6 +163,64 @@ $script
 PYEOF
 }
 
+render="$scripts_dir/render_diagram.py"
+prop_edit() {
+  # prop_edit <dir> <property name> <python statements using p (the property) and d (findings)>
+  mutate "$1" '
+import json, sys
+path = sys.argv[1] + "/verification/findings.json"
+d = json.load(open(path))
+p = [x for x in d["targets"][0]["properties"] if x["name"] == sys.argv[2]][0]
+exec(sys.argv[3])
+json.dump(d, open(path, "w"), indent=2)
+' "$2" "$3"
+}
+JD=verification/models/job-drain
+make_reconcile() {
+  local dir="$1" old new
+  old="$(git -C "$dir" rev-parse HEAD)"
+  printf '\n# reviewed\n' >> "$dir/demo/worker.py"
+  git -C "$dir" add demo/worker.py
+  git -C "$dir" -c user.email=t@e -c user.name=t commit -q -m "comment in worker"
+  new="$(git -C "$dir" rev-parse HEAD)"
+  mutate "$dir" '
+import json, os, shutil, sys
+repo, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+path = repo + "/verification/findings.json"
+d = json.load(open(path))
+d["commit"] = new
+d["invocation"] = "/verify-formally reconcile"
+res = repo + "/verification/models/job-drain/results"
+os.makedirs(res + "/before", exist_ok=True)
+for ext in (".json", ".log"):
+    shutil.copy2(res + "/Spec" + ext, res + "/before/Spec" + ext)
+d["targets"][0]["reconcile"] = {
+    "outcome": ["in_sync"], "from_commit": old, "to_commit": new, "commits_read": [new],
+    "changes": [{"commit": new, "effect": "no_effect", "note": "comment only"}],
+    "pre_update_runs": ["verification/models/job-drain/results/before/Spec.json"]}
+json.dump(d, open(path, "w"), indent=2)
+corr = repo + "/verification/models/job-drain/CORRESPONDENCE.md"
+text = open(corr).read().replace(old, new)
+open(corr, "w").write(text)
+open(repo + "/verification/README.md", "a").write("\n## Reconcile\n\n- job-drain: in_sync.\n")
+' "$old" "$new"
+  python3 "$render" "$dir" > /dev/null 2>&1
+  echo "$old"
+}
+rec_edit() {
+  # rec_edit <dir> <python statements using r (the reconcile record), d (findings), old, new>
+  mutate "$1" '
+import json, subprocess, sys
+repo = sys.argv[1]
+path = repo + "/verification/findings.json"
+d = json.load(open(path))
+r = d["targets"][0]["reconcile"]
+old, new = r["from_commit"], r["to_commit"]
+exec(sys.argv[2])
+json.dump(d, open(path, "w"), indent=2)
+' "$2"
+}
+
 echo "== good run =="
 good_out="$(run_checker "$good" 2>&1)"
 good_ec=$?
@@ -674,7 +732,7 @@ mutate "$dir" '
 import json, sys
 path = sys.argv[1] + "/verification/findings.json"
 data = json.load(open(path))
-p = data["targets"][0]["properties"][1]
+p = [x for x in data["targets"][0]["properties"] if x["tool"] == "lean"][0]
 data["targets"][0]["properties"] = [p]
 data["findings"][0]["properties"] = [p["name"]]
 data["invocation"] = "/verify-formally lean demo/worker.py"
@@ -844,6 +902,7 @@ json.dump(data, open(path, "w"), indent=2)
 check_case "p12-fixed-outside-reconcile-caught" "$dir" "1" "C01" "not a reconcile run" --no-exec
 
 dir="$(make_copy p12b-fixed-in-reconcile-ok)"
+make_reconcile "$dir" > /dev/null
 mutate "$dir" '
 import json, sys
 path = sys.argv[1] + "/verification/findings.json"
@@ -1419,6 +1478,9 @@ check_case "r5-lean-violated-by-unproved-theorem-caught" "$dir" "1" "C04" "has n
 
 dir="$(make_copy r5-lean-violated-by-proved-theorem-counts)"
 mutate "$dir" "$lean_mutation" violated '[{"name": "Fake.not_released"}]' register
+printf '%s\n' '{"kind": "manual", "states": [{"id": "a", "code": "demo/worker.py:19"}], "initial": ["a"], "transitions": []}' \
+  > "$dir/verification/models/fake/diagram.json"
+python3 "$render" "$dir" > /dev/null 2>&1
 check_lines "r5-lean-violated-by-proved-theorem-counts" "$dir" "0" "--no-exec" \
   "!ERROR|C04|has no modeled target"
 
@@ -1529,6 +1591,243 @@ else
   fail "c16-limit-workers-and-continue-after-failed-group"
   echo "$unit_out" | sed 's/^/    /'
 fi
+
+echo "== C17: code-level properties and results =="
+JD=verification/models/job-drain
+R="$JD/results"
+
+dir="$(make_copy c17-edited-result-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/models/job-drain/results/LeasesReleasedOnRealCode.json"
+d = json.load(open(path)); d["result"] = "pass"; d["violated"] = []
+json.dump(d, open(path, "w"), indent=2)
+'
+check_case "c17-edited-result-caught" "$dir" "1" "C17" "does not match its own log" --no-exec
+
+dir="$(make_copy c17-missing-log-caught)"
+rm -f "$dir/$R/LeasedPrefix.log"
+check_case "c17-missing-log-caught" "$dir" "1" "C17" "no raw log" --no-exec
+
+dir="$(make_copy c17-hand-written-result-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/models/job-drain/results/LeasedPrefix.json"
+d = json.load(open(path)); d["command"] = "pytest prop_job_drain.py"
+json.dump(d, open(path, "w"), indent=2)
+'
+check_case "c17-hand-written-result-caught" "$dir" "1" "C17" "not a run_code_check.py result" --no-exec
+
+dir="$(make_copy c17-tla-json-disguised-as-code-caught)"
+mutate "$dir" '
+import json, sys
+path = sys.argv[1] + "/verification/models/job-drain/results/SpecFixed.json"
+d = json.load(open(path)); d["generator"] = "run_code_check.py"
+json.dump(d, open(path, "w"), indent=2)
+'
+check_case "c17-tla-json-disguised-as-code-caught" "$dir" "1" "C17" "" --no-exec
+
+dir="$(make_copy c17-sanity-that-passes-caught)"
+prop_edit "$dir" LeasedPrefix 'p["vacuity"]["sanity"] = ["verification/models/job-drain/results/LeasedPrefix.json"]'
+check_case "c17-sanity-that-passes-caught" "$dir" "1" "C17" "it must be a violation" --no-exec
+
+dir="$(make_copy c17-sanity-cited-as-mutant-caught)"
+prop_edit "$dir" LeasedPrefix 'p["vacuity"]["mutants"] = ["verification/models/job-drain/results/sanity-LeasedPrefix.json"]'
+check_case "c17-sanity-cited-as-mutant-caught" "$dir" "1" "C17" "is not a --mutant run" --no-exec
+
+dir="$(make_copy c17-no-vacuity-caught)"
+prop_edit "$dir" LeasedPrefix 'del p["vacuity"]'
+check_case "c17-no-vacuity-caught" "$dir" "1" "C17" "vacuity.status" --no-exec
+
+dir="$(make_copy c17-generated-inputs-claimed-exhaustive-caught)"
+prop_edit "$dir" LeasedPrefix 'p["result"] = "no_violation_within_bounds"'
+check_case "c17-generated-inputs-claimed-exhaustive-caught" "$dir" "1" "C17" "not exhaustive" --no-exec
+
+dir="$(make_copy c17-code-proved-caught)"
+prop_edit "$dir" LeasedPrefix 'p["result"] = "proved"'
+check_case "c17-code-proved-caught" "$dir" "1" "C01" "never 'proved'" --no-exec
+
+dir="$(make_copy c17-no-counterexample-on-tla-caught)"
+prop_edit "$dir" LeasesReleased 'p["result"] = "no_counterexample_found"'
+check_case "c17-no-counterexample-on-tla-caught" "$dir" "1" "C01" "applies only to code" --no-exec
+
+dir="$(make_copy c17-missing-harness-caught)"
+prop_edit "$dir" LeasedPrefix 'p["harness"] = "verification/models/job-drain/nope.py"'
+check_case "c17-missing-harness-caught" "$dir" "1" "C17" "harness" --no-exec
+
+dir="$(make_copy c17-harness-outside-target-caught)"
+prop_edit "$dir" LeasedPrefix 'p["harness"] = "demo/worker.py"'
+check_case "c17-harness-outside-target-caught" "$dir" "1" "C17" "is not a file under" --no-exec
+
+dir="$(make_copy c17-missing-bounds-caught)"
+prop_edit "$dir" LeasedPrefix 'p["bounds"] = ""'
+check_case "c17-missing-bounds-caught" "$dir" "1" "C17" "no 'bounds'" --no-exec
+
+dir="$(make_copy c17-unknown-verifier-caught)"
+prop_edit "$dir" LeasedPrefix 'p["verifier"] = "frama-c"'
+check_case "c17-unknown-verifier-caught" "$dir" "1" "C17" "verifier" --no-exec
+
+dir="$(make_copy c17-patch-changed-after-run-caught)"
+printf '\n' >> "$dir/$JD/mutants/stop-one-late.patch"
+check_case "c17-patch-changed-after-run-caught" "$dir" "1" "C17" "changed after the run" --no-exec
+
+dir="$(make_copy c17-violated-without-violating-run-caught)"
+prop_edit "$dir" LeasedPrefix 'p["result"] = "violated"'
+check_case "c17-violated-without-violating-run-caught" "$dir" "1" "C17" "no cited run is a violation" --no-exec
+
+dir="$(make_copy c17-mutant-cited-as-run-caught)"
+prop_edit "$dir" LeasedPrefix 'p["runs"] = [{"json": "verification/models/job-drain/results/mutant-stop-one-late.json", "result": "violation"}]; p["result"] = "violated"'
+check_case "c17-mutant-cited-as-run-caught" "$dir" "1" "C17" "is a mutant run" --no-exec
+
+dir="$(make_copy c17-run-result-not-copied-caught)"
+prop_edit "$dir" LeasedPrefix 'p["runs"][0]["result"] = "violation"'
+check_case "c17-run-result-not-copied-caught" "$dir" "1" "C17" "the JSON says 'pass'" --no-exec
+
+dir="$(make_copy c17-no-exec-warns)"
+check_lines "c17-no-exec-warns" "$dir" "0" "--no-exec" \
+  "WARNING|C17|did not re-run the 4 cited code-level"
+
+dir="$(make_copy c17-exec-stale-harness-caught)"
+sed -i.bak 's/ids\[:min(n, stop_after)\]/ids[:1]/' "$dir/$JD/prop_job_drain.py" && rm -f "$dir/$JD/prop_job_drain.py.bak"
+check_case "c17-exec-stale-harness-caught" "$dir" "1" "C17" "re-running"
+
+echo "== C18: state diagram page =="
+dir="$(make_copy c18-missing-page-caught)"
+rm -f "$dir/verification/state-diagram.html"
+check_case "c18-missing-page-caught" "$dir" "1" "C18" "state-diagram.html not found" --no-exec
+
+dir="$(make_copy c18-stale-page-caught)"
+printf '\n' >> "$dir/$JD/diagram.json"
+check_case "c18-stale-page-caught" "$dir" "1" "C18" "is stale" --no-exec
+
+dir="$(make_copy c18-stale-after-spec-edit-caught)"
+printf '\\* edited\n' >> "$dir/$JD/JobDrain.tla"
+check_case "c18-stale-after-spec-edit-caught" "$dir" "1" "C18" "JobDrain.tla" --no-exec
+
+dir="$(make_copy c18-hand-written-page-caught)"
+printf '<html><body>diagram</body></html>\n' > "$dir/verification/state-diagram.html"
+check_case "c18-hand-written-page-caught" "$dir" "1" "C18" "was not written by render_diagram.py" --no-exec
+
+dir="$(make_copy c18-missing-diagram-json-caught)"
+rm -f "$dir/$JD/diagram.json"
+python3 "$render" "$dir" > /dev/null 2>&1
+check_case "c18-missing-diagram-json-caught" "$dir" "1" "C18" "no verification/models/job-drain/diagram.json" --no-exec
+
+dir="$(make_copy c18-manual-diagram-for-tla-target-caught)"
+printf '%s\n' '{"kind": "manual", "states": [{"id": "a", "code": "demo/worker.py:19"}], "initial": ["a"], "transitions": []}' > "$dir/$JD/diagram.json"
+python3 "$render" "$dir" > /dev/null 2>&1
+check_case "c18-manual-diagram-for-tla-target-caught" "$dir" "1" "C18" "has a TLA+ model" --no-exec
+
+dir="$(make_copy c18-render-error-caught)"
+printf '%s\n' '{"kind": "tla", "spec": "JobDrain.tla", "cfg": "Spec.cfg", "project": ["nope"]}' > "$dir/$JD/diagram.json"
+python3 "$render" "$dir" > /dev/null 2>&1
+check_case "c18-render-error-caught" "$dir" "1" "C18" "failed to render" --no-exec
+
+dir="$(make_copy c18-counterexample-not-highlighted-warns)"
+printf '%s\n' '{"kind": "tla", "spec": "JobDrain.tla", "cfg": "Spec.cfg"}' > "$dir/$JD/diagram.json"
+python3 "$render" "$dir" > /dev/null 2>&1
+check_lines "c18-counterexample-not-highlighted-warns" "$dir" "0" "--no-exec" \
+  "WARNING|C18|no violating run is highlighted"
+
+echo "== C19: reconcile records =="
+dir="$(make_copy c19-in-sync-ok)"
+make_reconcile "$dir" > /dev/null
+check_lines "c19-in-sync-ok" "$dir" "0" "--no-exec" "!ERROR||"
+
+dir="$(make_copy c19-missing-record-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'del d["targets"][0]["reconcile"]'
+check_case "c19-missing-record-caught" "$dir" "1" "C19" "no reconcile record" --no-exec
+
+dir="$(make_copy c19-unread-commit-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["commits_read"] = []; r["changes"] = []'
+check_case "c19-unread-commit-caught" "$dir" "1" "C19" "were not read" --no-exec
+
+dir="$(make_copy c19-unclassified-commit-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["changes"] = []'
+check_case "c19-unclassified-commit-caught" "$dir" "1" "C19" "has no entry in changes" --no-exec
+
+dir="$(make_copy c19-promise-change-without-evidence-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["changes"][0]["effect"] = "promise_changed"; r["outcome"] = ["updated"]'
+check_case "c19-promise-change-without-evidence-caught" "$dir" "1" "C19" "cites no evidence" --no-exec
+
+dir="$(make_copy c19-in-sync-with-shape-change-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["changes"][0]["effect"] = "shape_changed"'
+check_case "c19-in-sync-with-shape-change-caught" "$dir" "1" "C19" "outcome in_sync but" --no-exec
+
+dir="$(make_copy c19-updated-without-break-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["changes"][0]["effect"] = "shape_changed"; r["outcome"] = ["updated"]'
+check_case "c19-updated-without-break-caught" "$dir" "1" "C19" "can still fail" --no-exec
+
+dir="$(make_copy c19-updated-with-passing-break-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["changes"][0]["effect"] = "shape_changed"; r["outcome"] = ["updated"]; r["post_update_break"] = ["verification/models/job-drain/results/SpecFixed.json"]'
+check_case "c19-updated-with-passing-break-caught" "$dir" "1" "C19" "is not a violating result" --no-exec
+
+dir="$(make_copy c19-updated-ok)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["changes"][0]["effect"] = "shape_changed"; r["outcome"] = ["updated"]; r["post_update_break"] = ["verification/models/job-drain/results/mutant-stop-one-late.json"]'
+check_lines "c19-updated-ok" "$dir" "0" "--no-exec" "!ERROR||"
+
+dir="$(make_copy c19-blocked-moves-sync-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["outcome"] = ["blocked"]; r["blocked_reason"] = "TLC needs more memory than this machine has"'
+check_case "c19-blocked-moves-sync-caught" "$dir" "1" "C19" "keeps its sync commit" --no-exec
+
+dir="$(make_copy c19-blocked-without-reason-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["outcome"] = ["blocked"]; r["to_commit"] = old'
+check_case "c19-blocked-without-reason-caught" "$dir" "1" "C19" "blocked without blocked_reason" --no-exec
+
+dir="$(make_copy c19-sync-stamp-not-moved-caught)"
+old="$(make_reconcile "$dir")"
+new="$(git -C "$dir" rev-parse HEAD)"
+sed -i.bak "s/$new/$old/" "$dir/$JD/CORRESPONDENCE.md" && rm -f "$dir/$JD/CORRESPONDENCE.md.bak"
+check_case "c19-sync-stamp-not-moved-caught" "$dir" "1" "C19" "CORRESPONDENCE.md sync commit" --no-exec
+
+dir="$(make_copy c19-no-pre-update-runs-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["pre_update_runs"] = []'
+check_case "c19-no-pre-update-runs-caught" "$dir" "1" "C19" "no pre_update_runs" --no-exec
+
+dir="$(make_copy c19-pre-update-run-outside-before-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["pre_update_runs"] = ["verification/models/job-drain/results/Spec.json"]'
+check_case "c19-pre-update-run-outside-before-caught" "$dir" "1" "C19" "under results/before/" --no-exec
+
+dir="$(make_copy c19-bug-without-introducing-commit-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["outcome"] = ["bug"]'
+check_case "c19-bug-without-introducing-commit-caught" "$dir" "1" "C19" "introduced_by" --no-exec
+
+dir="$(make_copy c19-bug-with-introducing-commit-ok)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["outcome"] = ["bug"]; d["findings"][0]["introduced_by"] = old'
+check_lines "c19-bug-with-introducing-commit-ok" "$dir" "0" "--no-exec" "!ERROR||"
+
+dir="$(make_copy c19-from-commit-not-ancestor-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["from_commit"] = "0" * 40'
+check_case "c19-from-commit-not-ancestor-caught" "$dir" "1" "C19" "not an ancestor" --no-exec
+
+dir="$(make_copy c19-bad-outcome-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["outcome"] = ["in_sync", "bug"]'
+check_case "c19-bad-outcome-caught" "$dir" "1" "C19" "is not one of" --no-exec
+
+dir="$(make_copy c19-readme-without-reconcile-section-caught)"
+make_reconcile "$dir" > /dev/null
+python3 - "$dir/verification/README.md" <<'PYEOF'
+import sys
+p = sys.argv[1]
+open(p, "w").write(open(p).read().replace("## Reconcile", "## Upkeep"))
+PYEOF
+check_case "c19-readme-without-reconcile-section-caught" "$dir" "1" "C19" "Reconcile" --no-exec
 
 echo ""
 echo "$pass_count passed, $fail_count failed"

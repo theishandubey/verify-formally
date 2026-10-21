@@ -214,6 +214,78 @@ Correspondence between JobDrain.tla and demo/worker.py.
 - The property `LeasesReleased == ~draining => outstanding = 0` states the intended contract: "after drain returns, no job is left leased."
 EOF
 
+printf -- '- **Code**: `demo/worker.py` at commit `%s`\n' "$commit_sha" >> verification/models/job-drain/CORRESPONDENCE.md
+
+cat > verification/models/job-drain/prop_job_drain.py <<'PYEOF'
+import sys
+from pathlib import Path
+
+from hypothesis import given, settings, strategies as st
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "demo"))
+
+from worker import Queue, drain
+
+SETTINGS = settings(derandomize=True, max_examples=100, database=None, deadline=None)
+JOBS = st.integers(min_value=1, max_value=5)
+STOP = st.integers(min_value=1, max_value=6)
+
+
+@SETTINGS
+@given(JOBS, STOP)
+def test_no_job_left_leased(n, stop_after):
+    queue = Queue(["j%d" % i for i in range(n)])
+    drain(queue, stop_after)
+    assert queue.leased == set(), "LeasesReleasedOnRealCode violated: %r" % queue.leased
+
+
+@SETTINGS
+@given(JOBS, STOP)
+def test_returns_leased_prefix(n, stop_after):
+    ids = ["j%d" % i for i in range(n)]
+    assert drain(Queue(ids), stop_after) == ids[:min(n, stop_after)], "LeasedPrefix violated"
+
+
+@SETTINGS
+@given(JOBS, STOP)
+def test_returns_leased_prefix_sanity(n, stop_after):
+    drain(Queue(["j%d" % i for i in range(n)]), stop_after)
+    assert False, "sanity: the LeasedPrefix harness reaches its end"
+PYEOF
+
+cat > verification/models/job-drain/mutants/stop-one-late.patch <<'PATCHEOF'
+--- a/demo/worker.py
++++ b/demo/worker.py
+@@ -20,7 +20,7 @@
+     while queue.has_pending():
+         job_id = queue.lease()
+         leased_here.append(job_id)
+-        if len(leased_here) == stop_after:
++        if len(leased_here) == stop_after + 1:
+             for early_id in leased_here[:-1]:
+                 queue.release(early_id)
+             return leased_here
+PATCHEOF
+
+rcc="$scripts_dir/run_code_check.py"
+prop="$model_dir/prop_job_drain.py"
+pytest_cmd=(.venv/bin/python -m pytest -q -p no:cacheprovider)
+set +e
+"$rcc" --tool hypothesis --cwd "$dest" --out "$model_dir/results/LeasesReleasedOnRealCode.json" --quiet \
+  -- "${pytest_cmd[@]}" "$prop::test_no_job_left_leased"
+"$rcc" --tool hypothesis --cwd "$dest" --out "$model_dir/results/LeasedPrefix.json" --quiet \
+  -- "${pytest_cmd[@]}" "$prop::test_returns_leased_prefix"
+"$rcc" --tool hypothesis --cwd "$dest" --out "$model_dir/results/sanity-LeasedPrefix.json" --quiet \
+  -- "${pytest_cmd[@]}" "$prop::test_returns_leased_prefix_sanity"
+"$rcc" --tool hypothesis --cwd "$dest" --out "$model_dir/results/mutant-stop-one-late.json" --quiet \
+  --mutant "$model_dir/mutants/stop-one-late.patch" -- "${pytest_cmd[@]}" "$prop::test_returns_leased_prefix"
+set -e
+
+cat > verification/models/job-drain/diagram.json <<'JSONEOF'
+{"kind": "tla", "spec": "JobDrain.tla", "cfg": "Spec.cfg", "highlight": ["results/Spec.json"],
+ "actions": {"Lease": "demo/worker.py:21", "Stop": "demo/worker.py:23-26"}}
+JSONEOF
+
 cat > verification/repro/repro_demo.py <<PYEOF
 import sys
 from pathlib import Path
@@ -302,6 +374,8 @@ Baseline: \`$test_command\` -> 0 passed; lint: not run.
 - shutdown-drain: passing run has no vacuity check and no CORRESPONDENCE.md; supports no claim.
 - everything except demo/worker.py: this is a minimal fixture, not a real run.
 
+State diagrams: [state-diagram.html](state-diagram.html).
+
 ## Re-running
 
 \`verification/rerun.sh\` re-runs every cfg and the Lean audit; repro tests run with \`$repro_runner\`.
@@ -363,7 +437,7 @@ data = {
             "id": "job-drain",
             "title": "Jobs stranded on early stop in drain",
             "files": ["demo/worker.py"],
-            "tools": ["tla", "lean"],
+            "tools": ["tla", "lean", "code"],
             "status": "modeled",
             "properties": [
                 {
@@ -399,6 +473,35 @@ data = {
                             "sanity/SanityAlwaysDraining.cfg: invariant_violation",
                             "sanity/SanityAlwaysDrainingFixed.cfg: invariant_violation",
                         ],
+                    },
+                },
+                {
+                    "name": "LeasesReleasedOnRealCode",
+                    "kind": "invariant",
+                    "statement": "after the real drain returns, no job is left leased",
+                    "source": "demo/worker.py:18: drain(queue, stop_after) is documented to leave the queue clean",
+                    "tool": "code",
+                    "verifier": "hypothesis",
+                    "harness": "verification/models/job-drain/prop_job_drain.py",
+                    "bounds": "generated inputs: 1..5 jobs, stop_after 1..6, 100 derandomized examples",
+                    "result": "violated",
+                    "runs": [{"json": "verification/models/job-drain/results/LeasesReleasedOnRealCode.json", "result": "violation"}],
+                },
+                {
+                    "name": "LeasedPrefix",
+                    "kind": "invariant",
+                    "statement": "the real drain returns exactly the first min(n, stop_after) job ids",
+                    "source": "demo/worker.py:18",
+                    "tool": "code",
+                    "verifier": "hypothesis",
+                    "harness": "verification/models/job-drain/prop_job_drain.py",
+                    "bounds": "generated inputs: 1..5 jobs, stop_after 1..6, 100 derandomized examples",
+                    "result": "no_counterexample_found",
+                    "runs": [{"json": "verification/models/job-drain/results/LeasedPrefix.json", "result": "pass"}],
+                    "vacuity": {
+                        "status": "passed",
+                        "mutants": ["verification/models/job-drain/results/mutant-stop-one-late.json"],
+                        "sanity": ["verification/models/job-drain/results/sanity-LeasedPrefix.json"],
                     },
                 },
                 {
@@ -522,5 +625,7 @@ Mutant \`mutants/MutantFixedNoRelease.cfg\` (fixed config, release dropped entir
 \`LeasesReleased\`. Sanity \`sanity/SanityAlwaysDraining.cfg\` confirms \`draining\` actually
 becomes false at the reported constants.
 EOF
+
+python3 "$scripts_dir/render_diagram.py" "$dest" > /dev/null
 
 echo "$commit_sha"

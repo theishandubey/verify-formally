@@ -37,6 +37,8 @@ Before reporting any result for a property, do all three:
 
 For Lean, the equivalent is: prove the property fails for the buggy configuration or a concrete input (`¬ ∀ ...` with a witness), and instantiate every theorem's hypotheses with a concrete example.
 
+For a code-level property, the equivalent is a sanity harness that must fail (the assumptions are satisfiable and the end of the harness is reachable) and a patch that breaks the real code the property guards, run with `run_code_check.py --mutant`, which must be caught (code-level-playbook.md section 4).
+
 Record the vacuity result per property and per bound set: `passed` (mutant failed, sanity invariants violated) or `failed` (the property is vacuous; fix it before reporting anything).
 A property can be vacuous at one bound set and not at another (with one worker a race cannot occur); claim results only at the bound sets where vacuity passed.
 
@@ -85,6 +87,12 @@ A property can be vacuous at one bound set and not at another (with one worker a
 - Do not pass `-continue`, `-simulate`, or `-generate`; `run_tlc.sh` rejects them because they make runs non-exhaustive or keep going past violations.
 - `lake build` succeeds with `sorry`; only `lean_audit.sh` decides "proved".
 - A Lean theorem under the same name but a weaker statement is not the same result; never weaken silently.
+- A code-level `incomplete` is not a pass: an unwinding assertion failed, so paths past the bound were never explored; raise `--unwind` (or `#[kani::unwind]`) until it passes or report the bound as the limit.
+- A code-level harness that copies the function under verification checks the copy; include, link, or import the real code.
+- An over-constrained harness passes everything: an `assume` that contradicts another, a precondition nothing satisfies, a Hypothesis strategy filtered to nothing; the sanity harness is what catches it, so never skip it.
+- Stubbing a function of the code under verification (instead of the environment) under-approximates it; say so, or do not do it.
+- CBMC and Kani report checks in library code (`std`, libc models) too; a failure there is still a failure of the harness's path, so read the trace before calling it noise.
+- Hypothesis and a CrossHair run with an unconfirmed condition are searches: "no counterexample found" is a weaker claim than a bounded model checker's pass, and the README says which one each result is.
 
 ## 4. Reproduction pitfalls
 

@@ -1,25 +1,42 @@
 #!/usr/bin/env bash
-# Usage: check_toolchain.sh [--tla-only | --lean-only] [--json]
+# Usage: check_toolchain.sh [--tla-only | --lean-only | --code-only] [--code] [--json]
 # Exits 0 when every required tool is present at a usable version, 1 otherwise.
+# --code also lists the code-level verifiers run_code_check.py drives (cbmc, esbmc, kani, jbmc,
+# crosshair, hypothesis); each is optional and reported as "absent" with an install hint, since
+# a run needs only the one that fits the target's language. --code-only skips TLA+ and Lean and
+# exits 1 unless at least one code-level verifier is present.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$here/lib.sh"
 
-need_tla=1 need_lean=1 json=0
+need_tla=1 need_lean=1 need_code=0 json=0
 for arg in "$@"; do
   case "$arg" in
     --tla-only) need_lean=0 ;;
     --lean-only) need_tla=0 ;;
+    --code) need_code=1 ;;
+    --code-only) need_tla=0; need_lean=0; need_code=1 ;;
     --json) json=1 ;;
-    -h|--help) sed -n 2,3p "$0"; exit 0 ;;
+    -h|--help) sed -n 2,7p "$0"; exit 0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
 
 ok=1
 declare -a rows=()
-record() { rows+=("$1|$2|$3|$4"); [ "$2" = ok ] || ok=0; }
+record() { rows+=("$1|$2|$3|$4"); [ "$2" = ok ] || [ "$2" = absent ] || ok=0; }
+
+code_found=0
+record_code() {
+  local name="$1" path="$2" detail="$3" hint="$4"
+  if [ -n "$path" ] && [ -n "$detail" ]; then
+    record "$name" ok "$path" "$detail"
+    code_found=1
+  else
+    record "$name" absent "" "$hint"
+  fi
+}
 
 if [ "$need_tla" = 1 ]; then
   if java="$(resolve_java)"; then
@@ -67,6 +84,34 @@ if [ "$need_lean" = 1 ]; then
   fi
 fi
 
+if [ "$need_code" = 1 ]; then
+  p="$(command -v cbmc 2>/dev/null || true)"
+  record_code cbmc "$p" "${p:+$("$p" --version 2>/dev/null | head -1)}" \
+    "C/C++: install a release from https://github.com/diffblue/cbmc/releases (Debian/Ubuntu .deb: apt install ./ubuntu-*-cbmc-*.deb; macOS: brew install cbmc)"
+  p="$(command -v esbmc 2>/dev/null || true)"
+  record_code esbmc "$p" "${p:+$("$p" --version 2>/dev/null | head -1)}" \
+    "C/C++ (alternative to cbmc): https://github.com/esbmc/esbmc/releases"
+  p="$(command -v jbmc 2>/dev/null || true)"
+  record_code jbmc "$p" "${p:+$("$p" --version 2>/dev/null | head -1)}" \
+    "Java: ships with the cbmc release packages"
+  p="$(command -v cargo 2>/dev/null || true)"
+  kv=""
+  [ -n "$p" ] && kv="$(cargo kani --version 2>/dev/null | head -1)"
+  record_code kani "${kv:+$p}" "$kv" \
+    "Rust: cargo install --locked kani-verifier && cargo kani setup"
+  p="$(command -v crosshair 2>/dev/null || true)"
+  cv=""
+  if [ -n "$p" ]; then
+    cpy="$(head -1 "$p" 2>/dev/null | sed -n 's/^#! *//p' | awk '{print $1}')"
+    cv="$("${cpy:-python3}" -c 'from importlib.metadata import version; print("crosshair-tool " + version("crosshair-tool"))' 2>/dev/null)"
+  fi
+  record_code crosshair "${cv:+$p}" "$cv" \
+    "Python: pip install crosshair-tool (into the project's virtualenv)"
+  hv="$(python3 -c 'from importlib.metadata import version; print("hypothesis " + version("hypothesis"))' 2>/dev/null)"
+  record_code hypothesis "${hv:+$(command -v python3)}" "$hv" \
+    "Python: pip install hypothesis pytest (into the project's virtualenv; check the venv's python, not this one)"
+fi
+
 if py="$(command -v python3)"; then
   pyver="$("$py" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])')"
   if "$py" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)'; then
@@ -85,7 +130,7 @@ tools = {}
 for line in sys.stdin.read().splitlines():
     name, status, path, detail = line.split("|", 3)
     tools[name] = {"status": status, "path": path, "detail": detail}
-print(json.dumps({"ok": all(t["status"] == "ok" for t in tools.values()), "tools": tools}, indent=2))
+print(json.dumps({"ok": all(t["status"] in ("ok", "absent") for t in tools.values()), "tools": tools}, indent=2))
 '
 else
   for row in "${rows[@]}"; do
@@ -94,4 +139,7 @@ else
   done
 fi
 
+if [ "$need_code" = 1 ] && [ "$need_tla" = 0 ] && [ "$need_lean" = 0 ] && [ "$code_found" = 0 ]; then
+  ok=0
+fi
 [ "$ok" = 1 ] && exit 0 || exit 1

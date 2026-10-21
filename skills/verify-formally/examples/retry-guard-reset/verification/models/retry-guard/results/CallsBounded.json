@@ -1,0 +1,39 @@
+{
+  "result": "violation",
+  "exhaustive": false,
+  "violated": [
+    "verification/models/retry-guard/prop_retry_guard.py::test_calls_bounded_by_both_limits"
+  ],
+  "failed_checks": [
+    {
+      "id": "verification/models/retry-guard/prop_retry_guard.py::test_calls_bounded_by_both_limits",
+      "description": "FAILED verification/models/retry-guard/prop_retry_guard.py::test_calls_bounded_by_both_limits",
+      "location": "verification/models/retry-guard/prop_retry_guard.py"
+    }
+  ],
+  "unwinding_failures": [],
+  "checks_total": 1,
+  "counterexample": "AssertionError: CallsBoundedOnRealCode violated: 5 calls to op() with max_errors=2, max_timeouts=2, failures ['transient', 'timeout', 'transient', 'timeout']\nassert 5 <= (2 + 2)\n+  where 5 = <prop_retry_guard.ScriptedOp object at 0x7f762e1fcd10>.calls\nFailing test case: test_calls_bounded_by_both_limits(\nmax_errors=2,\nmax_timeouts=2,\nscript=['transient', 'timeout', 'transient', 'timeout'],\n)\nExplanation:\nThese lines were always and only run by failing test cases:\n/tmp/retry_guard_reset_regen.4Mth1J/verification/models/retry-guard/prop_retry_guard.py:56\n/tmp/retry_guard_reset_regen.4Mth1J/verification/models/retry-guard/prop_retry_guard.py:57",
+  "test_counts": {
+    "failed": 1
+  },
+  "kind": "generated_inputs",
+  "generator": "run_code_check.py",
+  "tool": "hypothesis",
+  "tool_version": "pytest 9.1.1 hypothesis 6.170.5",
+  "argv": [
+    ".venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "verification/models/retry-guard/prop_retry_guard.py::test_calls_bounded_by_both_limits"
+  ],
+  "cwd": ".",
+  "mutant": null,
+  "exit_code": 1,
+  "elapsed_seconds": 0.873,
+  "raw_log": "verification/models/retry-guard/results/CallsBounded.log",
+  "command": "scripts/run_code_check.py --tool hypothesis --quiet --timeout 600 --out verification/models/retry-guard/results/CallsBounded.json --cwd . -- .venv/bin/python -m pytest -q -p no:cacheprovider verification/models/retry-guard/prop_retry_guard.py::test_calls_bounded_by_both_limits"
+}

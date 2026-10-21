@@ -1,0 +1,36 @@
+@@verify-formally run_code_check tool=hypothesis
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______________________ test_error_streak_gives_up_exactly ______________________
+
+    @SETTINGS
+>   @given(LIMITS, LIMITS)
+                   ^^^
+
+verification/models/retry-guard/prop_retry_guard.py:63: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+max_errors = 1, max_timeouts = 1
+
+    @SETTINGS
+    @given(LIMITS, LIMITS)
+    def test_error_streak_gives_up_exactly(max_errors, max_timeouts):
+        op = ScriptedOp(["transient"] * (max_errors + max_timeouts + 2), cap=100)
+        outcome = run(op, max_errors, max_timeouts)
+>       assert isinstance(outcome, GiveUp) and op.calls == max_errors, (
+            "StreakGivesUp violated: %r after %d calls with max_errors=%d"
+            % (outcome, op.calls, max_errors))
+E       AssertionError: StreakGivesUp violated: GiveUp('gave up after 2 errors, 0 timeouts') after 2 calls with max_errors=1
+E       assert (True and 2 == 1)
+E        +  where True = isinstance(GiveUp('gave up after 2 errors, 0 timeouts'), GiveUp)
+E        +  and   2 = <prop_retry_guard.ScriptedOp object at 0x7f140aa5ef10>.calls
+E       Failing test case: test_error_streak_gives_up_exactly(
+E           # The test always failed when commented parts were varied together.
+E           max_errors=1,  # or any other generated value
+E           max_timeouts=1,  # or any other generated value
+E       )
+
+verification/models/retry-guard/prop_retry_guard.py:67: AssertionError
+=========================== short test summary info ============================
+FAILED verification/models/retry-guard/prop_retry_guard.py::test_error_streak_gives_up_exactly
+1 failed in 0.29s

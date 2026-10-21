@@ -3,7 +3,7 @@
   "violated": "Termination",
   "states_generated": 23,
   "distinct_states": 12,
-  "depth": 4,
+  "depth": 3,
   "constants": {
     "MaxErrors": "3",
     "MaxTimeouts": "3",
@@ -39,16 +39,6 @@
     },
     {
       "index": 3,
-      "action": "<TransientStep line 41, col 3 to line 48, col 73 of module RetryGuard>",
-      "vars": {
-        "errors": "2",
-        "attempts": "0",
-        "status": "\"running\"",
-        "timeouts": "0"
-      }
-    },
-    {
-      "index": 4,
       "action": "<TimeoutStep line 51, col 3 to line 58, col 73 of module RetryGuard>",
       "vars": {
         "errors": "0",
@@ -60,7 +50,7 @@
   ],
   "tlc_version": "2.19",
   "tla2tools_release": "1.7.4",
-  "elapsed_seconds": 0.152,
+  "elapsed_seconds": 0.511,
   "raw_log": "verification/models/retry-guard/results/mutant-RetryGuardTerminationMutant.log",
   "exit_code": 13,
   "spec": "verification/models/retry-guard/RetryGuard.tla",

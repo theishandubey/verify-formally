@@ -1,0 +1,40 @@
+@@verify-formally run_code_check tool=hypothesis
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______________________ test_calls_bounded_by_both_limits _______________________
+
+    @SETTINGS
+>   @given(LIMITS, LIMITS, st.lists(st.sampled_from(sorted(FAILURES)), max_size=12))
+                   ^^^
+
+verification/models/retry-guard/prop_retry_guard.py:51: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+max_errors = 2, max_timeouts = 2
+script = ['transient', 'timeout', 'transient', 'timeout']
+
+    @SETTINGS
+    @given(LIMITS, LIMITS, st.lists(st.sampled_from(sorted(FAILURES)), max_size=12))
+    def test_calls_bounded_by_both_limits(max_errors, max_timeouts, script):
+        op = ScriptedOp(script, cap=max_errors + max_timeouts + 1)
+        run(op, max_errors, max_timeouts)
+>       assert op.calls <= max_errors + max_timeouts, (
+            "CallsBoundedOnRealCode violated: %d calls to op() with max_errors=%d, "
+            "max_timeouts=%d, failures %r" % (op.calls, max_errors, max_timeouts, script))
+E       AssertionError: CallsBoundedOnRealCode violated: 5 calls to op() with max_errors=2, max_timeouts=2, failures ['transient', 'timeout', 'transient', 'timeout']
+E       assert 5 <= (2 + 2)
+E        +  where 5 = <prop_retry_guard.ScriptedOp object at 0x7f762e1fcd10>.calls
+E       Failing test case: test_calls_bounded_by_both_limits(
+E           max_errors=2,
+E           max_timeouts=2,
+E           script=['transient', 'timeout', 'transient', 'timeout'],
+E       )
+E       Explanation:
+E           These lines were always and only run by failing test cases:
+E               verification/models/retry-guard/prop_retry_guard.py:56
+E               verification/models/retry-guard/prop_retry_guard.py:57
+
+verification/models/retry-guard/prop_retry_guard.py:55: AssertionError
+=========================== short test summary info ============================
+FAILED verification/models/retry-guard/prop_retry_guard.py::test_calls_bounded_by_both_limits
+1 failed in 0.58s

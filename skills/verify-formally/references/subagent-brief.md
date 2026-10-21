@@ -66,7 +66,9 @@ Everything else under verification/ and plans/ belongs to the lead; do not touch
 <Hard rules 1 to 8 from SKILL.md, with rule 1 narrowed by the Ownership section above>
 
 ## Required
-- CORRESPONDENCE.md for the model.
+- CORRESPONDENCE.md for the model or harness, with the sync commit.
+- diagram.json for the state diagram (references/state-diagram.md): kind tla with the control-state variables to project, or kind manual with file:line per state and transition.
+- For a code-level harness: the real code unmodified, every assumption listed, results only from run_code_check.py, a sanity harness and a real-code --mutant patch for every pass claim.
 - Fix flags model the exact code change you would propose, including new interference points it creates; if several fixes are plausible, one flag each.
 - Vacuity per property at the reported bounds: mutant, sanity invariants one per cfg under sanity/, and for fixed models a mutant that breaks the property by a different mechanism than re-enabling the bug.
 - Keep every cfg that produced a result; results under results/<cfg-stem>.json.

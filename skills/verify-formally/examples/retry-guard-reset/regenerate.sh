@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Usage: regenerate.sh
-# Maintainer-only tool: rebuilds every committed TLC/Lean result under verification/ from the
-# specs and Lean sources on disk, deterministically (--workers 1). Run this after editing any
-# .tla, .cfg, or .lean file, before committing.
+# Maintainer-only tool: rebuilds every committed TLC, code-level, and Lean result under
+# verification/ (and state-diagram.html) from the specs, harnesses, and Lean sources on disk,
+# deterministically (--workers 1, derandomized Hypothesis), by running verification/rerun.sh in
+# a scratch git repository. Run this after editing any .tla, .cfg, harness, or .lean file,
+# before committing.
 #
 # All TLC/Lean work happens in a scratch copy under ${TMPDIR:-/tmp}, so no incidental
 # toolchain output (.lake/build, TLC's per-run metadir) ever touches this directory; only the
@@ -20,29 +22,26 @@ scripts_dir="$skill/scripts"
 work="$(mktemp -d "${TMPDIR:-/tmp}/retry_guard_reset_regen.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
+# The scratch copy is a git repository laid out like the project this example stands for
+# (retry.py at its root), so run_code_check.py --mutant can copy and patch it.
+git init -q "$work"
+printf '.venv\n' > "$work/.gitignore"
+cp "$here/retry.py" "$here/fix.patch" "$work/"
+git -C "$work" add retry.py fix.patch .gitignore
+git -C "$work" -c user.email=verify-example@example.com -c user.name="verify-formally example" \
+  commit -q -m "add call_with_retry retry loop"
 cp -Rp "$here/verification" "$work/verification"
+ln -s "$here/.venv" "$work/.venv"
 
-# Stale committed JSON must not survive a run_tlc.sh that crashes before writing its --out.
+# Stale committed JSON must not survive a run that crashes before writing its --out.
 rm -f "$work"/verification/models/*/results/*.json
 
 status=0
-for spec in "$work"/verification/models/*/*.tla; do
-  dir=$(dirname "$spec")
-  for cfg in "$dir"/*.cfg "$dir"/sanity/*.cfg "$dir"/mutants/*.cfg; do
-    [ -f "$cfg" ] || continue
-    stem=$(basename "$cfg" .cfg); sub=$(basename "$(dirname "$cfg")")
-    case "$sub" in sanity) out="$dir/results/sanity-$stem.json" ;; mutants) out="$dir/results/mutant-$stem.json" ;; *) out="$dir/results/$stem.json" ;; esac
-    # run_tlc.sh exits 1 for a checked violation (buggy/mutant/sanity cfgs are supposed to
-    # violate); that is not a broken run, so it does not set status here, only a result of
-    # "error"/"timeout" (checked below) or lean_audit.sh failing does.
-    "$scripts_dir/run_tlc.sh" "$spec" "$cfg" --out "$out" --workers 1 --quiet
-    [ -f "$out" ] || { echo "run_tlc.sh wrote no $out" >&2; status=1; }
-  done
-done
-
-if [ -d "$work/verification/lean" ]; then
-  "$scripts_dir/lean_audit.sh" "$work/verification/lean" --out "$work/verification/lean/results.json" --quiet || status=1
-fi
+# rerun.sh exits 1 when a buggy/mutant/sanity check reports its expected violation; that is
+# not a broken run, so only an "error"/"timeout" result (checked below) sets status here.
+VERIFY_SKILL_DIR="$skill" "$work/verification/rerun.sh" || true
+python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get("result") == "proved" else 1)' \
+  "$work/verification/lean/results.json" || { echo "lean_audit.sh did not report proved" >&2; status=1; }
 
 if grep -rq '"result": "error"\|"result": "timeout"' \
     "$work/verification/models"/*/results/*.json "$work/verification/lean/results.json" \
@@ -72,6 +71,7 @@ STDLIB_TLA_RE = re.compile(r"(?<!\S)/\S*/([A-Za-z0-9_]+\.tla)")
 
 
 def relativize_text(text):
+    text = text.replace(work + "/", "").replace(work, ".")
     text = VERIFICATION_PREFIX_RE.sub("verification/", text)
     text = text.replace(skill_prefix, "")
     text = STDLIB_TLA_RE.sub(r"\1", text)
@@ -81,7 +81,7 @@ def relativize_text(text):
 for path in glob.glob(os.path.join(work, "verification", "models", "*", "results", "*.json")):
     with open(path) as f:
         data = json.load(f)
-    for key in ("spec", "cfg", "raw_log"):
+    for key in ("spec", "cfg", "raw_log", "cwd"):
         if key in data and isinstance(data[key], str):
             data[key] = relativize_text(data[key])
     if "command" in data and isinstance(data["command"], str):
@@ -104,6 +104,9 @@ if os.path.isfile(lean_results):
         f.write(relativize_text(raw))
 PYEOF
 
+# The page hashes the result JSONs it highlights, so render it again after they were rewritten.
+"$scripts_dir/render_diagram.py" "$work" || status=1
+
 if [ "$status" -ne 0 ]; then
   echo "run_tlc.sh or lean_audit.sh reported a broken run (not a checked buggy/mutant/sanity" \
     "result); leaving the committed verification/ results untouched, see the output above" >&2
@@ -123,6 +126,7 @@ done
 if [ -f "$work/verification/lean/results.json" ]; then
   cp -p "$work/verification/lean/results.json" "$here/verification/lean/results.json"
 fi
+cp -p "$work/verification/state-diagram.html" "$here/verification/state-diagram.html"
 
 echo
 printf '%-40s %s\n' "RESULT" "STEM"

@@ -3,8 +3,8 @@
 - **Status**: CONFIRMED
 - **Severity**: medium - triggers whenever a dependency alternates between two distinct failure modes (a flaky call that sometimes times out and sometimes errors outright); no crash, but the caller retries forever, holding a thread/coroutine and never surfacing the failure
 - **Targets**: retry-guard (`verification/models/retry-guard/`)
-- **Tools**: TLA+
-- **Properties violated**: `BoundedAttempts` - the total number of calls to `op()` never exceeds `max_errors + max_timeouts` (source: inferred from `retry.py`'s own `max_errors`/`max_timeouts` naming); `Termination` - `call_with_retry` always eventually returns or raises (source: inferred - a retry helper with two declared limits is expected to terminate)
+- **Tools**: TLA+, code-level (Hypothesis on the real `retry.py`)
+- **Properties violated**: `BoundedAttempts` - the total number of calls to `op()` never exceeds `max_errors + max_timeouts` (source: inferred from `retry.py`'s own `max_errors`/`max_timeouts` naming); `CallsBoundedOnRealCode` - the same bound, checked on the real code; `Termination` - `call_with_retry` always eventually returns or raises (source: inferred - a retry helper with two declared limits is expected to terminate)
 - **Location**: `retry.py:12-22` (the retry loop and its two `except` branches)
 - **Commit**: `7cc0dcad4bd2f8a9bdd48121237218153bf847c2`
 - **Repro tests**: `verification/repro/repro_retry_guard_reset.py::test_alternating_failures_cause_runaway_retry` (alternating `TransientError`/`TimeoutError` forever)
@@ -27,6 +27,8 @@ Neither counter ever reaches its limit, `GiveUp` is never raised, and `call_with
 
 Checker: `run_tlc.sh RetryGuard.tla RetryGuardLiveness.cfg`, constants `MaxErrors=3, MaxTimeouts=3, Fixed=FALSE` (`VIEW ViewNoAttempts`), 12 distinct states, depth 3 (a 2-state back-loop), result `property_violation` of `Termination`.
 The same root cause also violates `BoundedAttempts`: `run_tlc.sh RetryGuard.tla RetryGuard.cfg`, same constants, 51 distinct states (search halts at the first violation), depth 8, result `invariant_violation` of `BoundedAttempts`.
+On the real code, `run_code_check.py --tool hypothesis` on `prop_retry_guard.py::test_calls_bounded_by_both_limits` finds the smallest case: `max_errors=2, max_timeouts=2` with failures `transient, timeout, transient, timeout` makes 5 calls to `op()`, more than 4 (`results/CallsBounded.json`).
+The state diagram (`verification/state-diagram.html#t-retry-guard`) draws the liveness counterexample: the cycle between `errors = 1` and `timeouts = 1` that never reaches a give-up state.
 
 ## Reproduction
 

@@ -30,7 +30,8 @@
       ],
       "tools": [
         "tla",
-        "lean"
+        "lean",
+        "code"
       ],
       "status": "modeled",
       "properties": [
@@ -207,6 +208,53 @@
               "RetryGuard.buggy_not_bounded's altList witness (length 6, matching buggyCfg.maxAttempts = 3 + 3) is checked by decide to actually reach a non-done state, so the counterexample is not vacuous"
             ]
           }
+        },
+        {
+          "name": "CallsBoundedOnRealCode",
+          "kind": "invariant",
+          "statement": "for every sequence of TransientError/TimeoutError outcomes, the real call_with_retry calls op() at most max_errors + max_timeouts times before it returns or gives up",
+          "source": "inferred: the same reading of max_errors and max_timeouts as BoundedAttempts, checked on the real retry.py instead of the model",
+          "tool": "code",
+          "verifier": "hypothesis",
+          "harness": "verification/models/retry-guard/prop_retry_guard.py",
+          "bounds": "generated inputs, not exhaustive: max_errors and max_timeouts in 1..4, up to 12 scripted failures, 300 derandomized examples",
+          "result": "violated",
+          "runs": [
+            {
+              "json": "verification/models/retry-guard/results/CallsBounded.json",
+              "result": "violation"
+            }
+          ],
+          "vacuity": {
+            "status": "passed",
+            "note": "a violation on the unmodified code is non-vacuous by construction; the repro test is its evidence"
+          }
+        },
+        {
+          "name": "StreakGivesUp",
+          "kind": "invariant",
+          "statement": "max_errors consecutive TransientErrors from the start make the real call_with_retry raise GiveUp after exactly max_errors calls",
+          "source": "retry.py:21: `if errors >= max_errors or timeouts >= max_timeouts: raise GiveUp(...)`, and the parameter name max_errors",
+          "tool": "code",
+          "verifier": "hypothesis",
+          "harness": "verification/models/retry-guard/prop_retry_guard.py",
+          "bounds": "generated inputs, not exhaustive: max_errors and max_timeouts in 1..4 (all 16 combinations reachable), 300 derandomized examples",
+          "result": "no_counterexample_found",
+          "runs": [
+            {
+              "json": "verification/models/retry-guard/results/StreakGivesUp.json",
+              "result": "pass"
+            }
+          ],
+          "vacuity": {
+            "status": "passed",
+            "mutants": [
+              "verification/models/retry-guard/results/mutant-error-guard-off-by-one.json"
+            ],
+            "sanity": [
+              "verification/models/retry-guard/results/sanity-StreakGivesUp.json"
+            ]
+          }
         }
       ]
     }
@@ -222,11 +270,13 @@
         "retry-guard"
       ],
       "tools": [
-        "tla"
+        "tla",
+        "code"
       ],
       "properties": [
         "BoundedAttempts",
-        "Termination"
+        "Termination",
+        "CallsBoundedOnRealCode"
       ],
       "locations": [
         {

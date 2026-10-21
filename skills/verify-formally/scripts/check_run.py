@@ -8,9 +8,9 @@
 #   2  usage problem (bad arguments, repo-root does not exist)
 #
 # --json prints a JSON array of {"level", "check", "message", "fix"} instead of text.
-# --no-exec skips C10, C11 and the re-run half of C16, which run commands from findings.json
-# (repro_runner, collect_command) or re-run TLC; everything else is static (reads files, git,
-# JSON) and always runs. --no-exec always emits WARNINGs that these were skipped.
+# --no-exec skips C10, C11 and the re-run halves of C16 and C17, which run commands from
+# findings.json (repro_runner, collect_command) or re-run TLC and the code-level verifiers;
+# everything else is static (reads files, git, JSON) and always runs. --no-exec always emits WARNINGs that these were skipped.
 # Commands run by C10 and C11 get <repo>/.venv/bin and <repo>/node_modules/.bin prepended to
 # PATH when those directories exist.
 #
@@ -68,6 +68,29 @@
 #        log carries TLC's version banner and the spec name; (exec) every cited pass or
 #        violation cfg is re-run with this skill's run_tlc.sh and must reproduce result,
 #        violated, and (for pass) distinct_states
+#   C17  each code property (tool "code") names a verifier, a harness file under its target
+#        directory, and its bounds; every code-level result JSON (cited, or under a selected
+#        target's results/) was produced by run_code_check.py: its log carries the runner's
+#        header for the same tool and replays to the same result/violated/exhaustive, and a
+#        mutant's patch is unchanged and touches only real code. violated needs a cited
+#        violation; no_violation_within_bounds needs every cited run to be an exhaustive pass;
+#        no_counterexample_found needs every cited run to pass; both pass claims need a passed
+#        vacuity block with a violating --mutant run and a violating sanity run of the same
+#        verifier. (exec) every cited pass or violation is re-run and must reproduce result,
+#        violated, and (for pass) exhaustive
+#   C18  verification/state-diagram.html was written by render_diagram.py; every modeled target has a diagram.json (kind tla when the target has a TLA+
+#        property), a section that rendered without error, and input hashes that match the
+#        current files (otherwise the page is stale); a page rendered at another commit, a
+#        violating TLA+ run that is not highlighted, or a README that does not link the page,
+#        is a WARNING
+#   C19  (reconcile runs) every modeled target has a reconcile record: outcome in_sync, updated, bug,
+#        blocked (or updated + bug); from_commit is an ancestor of HEAD; to_commit and the
+#        CORRESPONDENCE.md sync commit are HEAD, or both stay at from_commit for blocked (with
+#        a blocked_reason); every commit from from_commit to HEAD touching the target's files
+#        is in commits_read and classified in changes, promise_changed with evidence and the
+#        old and new property wording; pre_update_runs exist under results/before/; updated
+#        needs a violating post_update_break; bug needs a CONFIRMED finding on the target
+#        naming introduced_by; the README has a Reconcile section
 import argparse
 import glob
 import json
@@ -82,6 +105,8 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import code_report  # noqa: E402
+import render_diagram  # noqa: E402
 import tlc_report  # noqa: E402
 
 VIOLATION_RESULTS = {
@@ -93,9 +118,13 @@ FINDING_STATUSES = {
 }
 REJECTION_STATUSES = {"BY-DESIGN", "OUT-OF-SCOPE"}
 PROPERTY_RESULTS = {
-    "violated", "no_violation_within_bounds", "proved", "unproved", "vacuous", "not_checked",
+    "violated", "no_violation_within_bounds", "no_counterexample_found", "proved", "unproved",
+    "vacuous", "not_checked",
 }
-PROPERTY_TOOLS = {"tla", "lean"}
+PROPERTY_TOOLS = {"tla", "lean", "code"}
+RECONCILE_OUTCOMES = {"in_sync", "updated", "bug", "blocked"}
+CHANGE_EFFECTS = {"no_effect", "shape_changed", "promise_changed", "promise_maybe_broken"}
+SHA_RE = re.compile(r"\b[0-9a-f]{40}\b")
 TARGET_STATUSES = {"modeled", "not_modeled"}
 SEVERITIES = {"high", "medium", "low"}
 FILE_LINE_RE = re.compile(r"\w+\.\w+:\d+")
@@ -337,6 +366,20 @@ def sanitize(raw):
             t["id"] = "target[%d]" % i
         _ensure_list(t, "properties", dict, "C01", issues,
                      "findings.json targets[%d].properties" % i)
+        if "reconcile" in t and t["reconcile"] is not None and not isinstance(
+                t["reconcile"], dict):
+            issues.append(error(
+                "C01", "findings.json targets[%d].reconcile must be an object, got %s"
+                % (i, type(t["reconcile"]).__name__),
+                "make 'reconcile' an object (see references/reconcile.md)",
+            ))
+            t["reconcile"] = None
+        if isinstance(t.get("reconcile"), dict):
+            rec = t["reconcile"]
+            rlabel = "findings.json targets[%d].reconcile" % i
+            for key, typ in (("outcome", str), ("commits_read", str), ("changes", dict),
+                             ("pre_update_runs", str), ("post_update_break", str)):
+                _ensure_list(rec, key, typ, "C01", issues, "%s.%s" % (rlabel, key))
         for j, p in enumerate(t.get("properties") or []):
             label = "findings.json targets[%d].properties[%d]" % (i, j)
             if "runs" in p and p["runs"] is not None:
@@ -478,12 +521,12 @@ def check_c01(ctx):
             tag = "%s/%s" % (tid, pname)
             if "tool" not in p:
                 issues.append(error("C01", "%s is missing 'tool'" % tag,
-                                     "set tool to 'tla' or 'lean'"))
+                                     "set tool to 'tla', 'lean', or 'code'"))
             elif p.get("tool") not in PROPERTY_TOOLS:
                 issues.append(error(
                     "C01", "%s has tool %r, not one of %s"
                     % (tag, p.get("tool"), sorted(PROPERTY_TOOLS)),
-                    "use exactly 'tla' or 'lean'",
+                    "use exactly 'tla', 'lean', or 'code'",
                 ))
             if "result" not in p:
                 issues.append(error("C01", "%s is missing 'result'" % tag,
@@ -500,6 +543,20 @@ def check_c01(ctx):
                     "applies only to tla properties" % tag,
                     "a Lean theorem is 'proved', 'unproved', or 'violated' by a proved "
                     "negation theorem; use one of those",
+                ))
+            elif p.get("tool") != "code" and p.get("result") == "no_counterexample_found":
+                issues.append(error(
+                    "C01", "%s: result='no_counterexample_found' applies only to code "
+                    "properties (a non-exhaustive search on the real code)" % tag,
+                    "a TLA+ property is 'no_violation_within_bounds'; a Lean property is "
+                    "'proved' or 'unproved'",
+                ))
+            elif p.get("tool") == "code" and p.get("result") == "proved":
+                issues.append(error(
+                    "C01", "%s: a code property is never 'proved'; a bounded model checker "
+                    "pass is 'no_violation_within_bounds' and a non-exhaustive search is "
+                    "'no_counterexample_found'" % tag,
+                    "use 'no_violation_within_bounds' with the bounds in 'bounds'",
                 ))
 
     for i, f in enumerate(d.get("findings") or []):
@@ -645,6 +702,8 @@ def _property_is_checked(repo, target_id, prop):
     result = prop.get("result")
     if prop.get("tool") == "tla":
         return result in ("violated", "no_violation_within_bounds")
+    if prop.get("tool") == "code":
+        return result in ("violated", "no_violation_within_bounds", "no_counterexample_found")
     if prop.get("tool") == "lean":
         if result == "proved":
             return True
@@ -671,6 +730,8 @@ def _has_attempt(repo, target, tdir):
     specs = glob.glob(os.path.join(tdir, "*.tla")) + glob.glob(
         os.path.join(tdir, "mutants", "*.tla"))
     if specs and glob.glob(os.path.join(tdir, "results", "*.json")):
+        return True
+    if any(_is_code_result(p) for p in glob.glob(os.path.join(tdir, "results", "*.json"))):
         return True
     if target.get("tools") != ["lean"]:
         return False
@@ -2034,7 +2095,8 @@ def _collect_cited_results(ctx):
         tid = str(t.get("id", "?"))
         target_dir = os.path.join(ctx.repo, "verification", "models", tid)
         for path in sorted(glob.glob(os.path.join(target_dir, "results", "*.json"))):
-            _c16_add(entries, path, tid, None, False)
+            if not _is_code_result(path):
+                _c16_add(entries, path, tid, None, False)
         for prop in t.get("properties") or []:
             if prop.get("tool") != "tla":
                 continue
@@ -2278,11 +2340,600 @@ def c16_skipped_warning(ctx):
     )
 
 
+RUN_CODE_CHECK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_code_check.py")
+CODE_PASS_RESULTS = ("no_violation_within_bounds", "no_counterexample_found")
+
+
+def _is_code_result(path):
+    data, err = load_json(path)
+    return not err and isinstance(data, dict) and data.get("generator") == "run_code_check.py"
+
+
+def _sha256(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        h.update(fh.read())
+    return h.hexdigest()
+
+
+def _c17_inspect(ctx, path, target_dir):
+    cache = ctx.cache.setdefault("c17", {})
+    if path not in cache:
+        cache[path] = _c17_inspect_uncached(ctx, path, target_dir)
+    return cache[path]
+
+
+def _c17_inspect_uncached(ctx, path, target_dir):
+    rel = os.path.relpath(path, ctx.repo)
+    redo = "never write or edit a result JSON by hand; produce it with run_code_check.py --out"
+    if not in_target_dir(path, target_dir):
+        return None, error("C17", "%s is outside the target directory %s"
+                           % (rel, os.path.relpath(target_dir, ctx.repo)),
+                           "keep every code-level result under verification/models/<id>/"
+                           "results/")
+    data, err = load_json(path)
+    if err or not isinstance(data, dict):
+        return None, error("C17", "%s: result JSON does not parse" % rel, redo)
+    tool = data.get("tool")
+    command = data.get("command")
+    try:
+        tokens = shlex.split(command) if isinstance(command, str) else []
+    except ValueError:
+        tokens = []
+    if (data.get("generator") != "run_code_check.py" or tool not in code_report.TOOLS
+            or not tokens or os.path.basename(tokens[0]) != "run_code_check.py"
+            or "--tool" not in tokens or tokens[tokens.index("--tool") + 1:][:1] != [tool]):
+        return None, error("C17", "%s: not a run_code_check.py result (generator=%r, tool=%r, "
+                           "command=%r)" % (rel, data.get("generator"), tool, command), redo)
+    if not isinstance(data.get("argv"), list) or not data["argv"]:
+        return None, error("C17", "%s: result JSON has no argv" % rel, redo)
+    log_path = path[:-len(".json")] + ".log"
+    if not os.path.isfile(log_path):
+        return None, error("C17", "%s: no raw log %s next to the result JSON"
+                           % (rel, os.path.relpath(log_path, ctx.repo)),
+                           "re-run with run_code_check.py --out; it writes both files")
+    log_text = read_text(log_path)
+    header = "%s tool=%s" % (code_report.HEADER_PREFIX, tool)
+    if not log_text.startswith(header):
+        return None, error("C17", "%s: %s is not a run_code_check.py log for tool %s"
+                           % (rel, os.path.relpath(log_path, ctx.repo), tool), redo)
+    exit_code = data.get("exit_code")
+    replayed = code_report.parse(tool, log_text, exit_code if isinstance(exit_code, int) else 0,
+                                 data.get("result") == "timeout")
+    for key in ("result", "violated", "exhaustive", "unwinding_failures"):
+        if replayed.get(key) != data.get(key):
+            return None, error(
+                "C17", "%s: result JSON does not match its own log (json %s=%r, log %s=%r)"
+                % (rel, key, data.get(key), key, replayed.get(key)),
+                "the JSON was edited after the run; re-run with run_code_check.py")
+    mutant = data.get("mutant")
+    if mutant is not None:
+        patch = resolve_repo_relative(ctx.repo, (mutant or {}).get("patch")) \
+            if isinstance(mutant, dict) else None
+        if not patch or not os.path.isfile(patch):
+            return None, error("C17", "%s: mutant patch %r not found"
+                               % (rel, (mutant or {}).get("patch") if isinstance(mutant, dict)
+                                  else mutant),
+                               "keep the mutant patch under verification/models/<id>/mutants/")
+        if _sha256(patch) != mutant.get("sha256"):
+            return None, error("C17", "%s: mutant patch %s changed after the run"
+                               % (rel, os.path.relpath(patch, ctx.repo)),
+                               "re-run the mutant with run_code_check.py --mutant")
+        files = mutant.get("files") or []
+        if not files or any(os.path.normpath(f).split(os.sep)[0] in
+                            ("verification", "plans", "verification-plans") for f in files):
+            return None, error("C17", "%s: mutant must change the real code, not the harness "
+                               "(files=%r)" % (rel, files),
+                               "write a patch that breaks the code under verification")
+    return data, None
+
+
+def _c17_entry_path(ctx, entry, target_dir):
+    raw = entry.get("json") if isinstance(entry, dict) else entry
+    if not isinstance(raw, str):
+        return None
+    for base in (ctx.repo, target_dir):
+        p = os.path.normpath(os.path.join(base, raw))
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def _c17_code_jsons(ctx):
+    """Every code-level result a selected target cites or keeps under results/."""
+    entries = {}
+    for t in ctx.targets:
+        tid = str(t.get("id", "?"))
+        target_dir = os.path.join(ctx.repo, "verification", "models", tid)
+        for path in sorted(glob.glob(os.path.join(target_dir, "results", "*.json"))):
+            if _is_code_result(path):
+                entries.setdefault(os.path.normpath(path), (target_dir, []))
+        for prop in t.get("properties") or []:
+            if prop.get("tool") != "code":
+                continue
+            vac = prop.get("vacuity") if isinstance(prop.get("vacuity"), dict) else {}
+            for e in list(prop.get("runs") or []) + list(vac.get("mutants") or []) + list(
+                    vac.get("sanity") or []):
+                p = _c17_entry_path(ctx, e, target_dir)
+                if p:
+                    entries.setdefault(p, (target_dir, []))[1].append(
+                        "%s/%s" % (tid, prop.get("name", "?")))
+    return entries
+
+
+def check_c17(ctx):
+    issues = []
+    for path, (target_dir, _labels) in _c17_code_jsons(ctx).items():
+        _data, issue = _c17_inspect(ctx, path, target_dir)
+        if issue:
+            issues.append(issue)
+    for t in ctx.targets:
+        tid = str(t.get("id", "?"))
+        target_dir = os.path.join(ctx.repo, "verification", "models", tid)
+        for prop in t.get("properties") or []:
+            if prop.get("tool") != "code":
+                continue
+            tag = "%s/%s" % (tid, prop.get("name", "?"))
+            result = prop.get("result")
+            verifier = prop.get("verifier")
+            if verifier not in code_report.TOOLS:
+                issues.append(error("C17", "%s: verifier %r is not one of %s"
+                                    % (tag, verifier, list(code_report.TOOLS)),
+                                    "set verifier to the --tool given to run_code_check.py"))
+            harness = resolve_repo_relative(ctx.repo, prop.get("harness"))
+            if not harness or not os.path.isfile(harness) or not in_target_dir(harness,
+                                                                               target_dir):
+                issues.append(error(
+                    "C17", "%s: harness %r is not a file under %s"
+                    % (tag, prop.get("harness"), os.path.relpath(target_dir, ctx.repo)),
+                    "put the harness (proof harness, contract wrapper, or property test) in "
+                    "verification/models/<id>/ and cite it in 'harness'"))
+            if not str(prop.get("bounds") or "").strip():
+                issues.append(error(
+                    "C17", "%s: no 'bounds' (unwind depth, input domain, search budget)" % tag,
+                    "state the bounds the result holds under; a code-level pass covers only "
+                    "its harness's inputs and unwinding"))
+            if result not in ("violated",) + CODE_PASS_RESULTS:
+                continue
+            runs = []
+            for i, run in enumerate(prop.get("runs") or []):
+                p = _c17_entry_path(ctx, run, target_dir)
+                if not p:
+                    issues.append(error("C17", "%s: runs[%d] json %r not found"
+                                        % (tag, i, run.get("json")),
+                                        "cite the result JSON run_code_check.py wrote"))
+                    continue
+                data, issue = _c17_inspect(ctx, p, target_dir)
+                if issue:
+                    continue
+                if data.get("tool") != verifier:
+                    issues.append(error("C17", "%s: runs[%d] was produced by %s, not %s"
+                                        % (tag, i, data.get("tool"), verifier),
+                                        "cite runs of the property's own verifier"))
+                if data.get("mutant") is not None:
+                    issues.append(error("C17", "%s: runs[%d] is a mutant run; runs[] cites "
+                                        "runs on the unmodified code" % (tag, i),
+                                        "move mutant results to vacuity.mutants"))
+                    continue
+                if run.get("result") != data.get("result"):
+                    issues.append(error("C17", "%s: runs[%d] says result=%r, the JSON says %r"
+                                        % (tag, i, run.get("result"), data.get("result")),
+                                        "copy result from the JSON"))
+                runs.append(data)
+            if not runs:
+                issues.append(error("C17", "%s: result=%r but no valid run is cited"
+                                    % (tag, result),
+                                    "cite at least one run_code_check.py result in runs[]"))
+                continue
+            if result == "violated" and not any(r.get("result") == "violation" for r in runs):
+                issues.append(error("C17", "%s: result=violated but no cited run is a "
+                                    "violation" % tag,
+                                    "cite the run whose counterexample shows the violation"))
+            if result in CODE_PASS_RESULTS:
+                bad = [r.get("result") for r in runs if r.get("result") != "pass"]
+                if bad:
+                    issues.append(error(
+                        "C17", "%s: result=%s but cited runs are %s" % (tag, result, bad),
+                        "a pass claim needs every cited run to pass; incomplete means the "
+                        "bound was too small, vacuous means nothing was checked"))
+                if result == "no_violation_within_bounds" and not all(
+                        r.get("exhaustive") for r in runs):
+                    issues.append(error(
+                        "C17", "%s: result=no_violation_within_bounds but a cited run is not "
+                        "exhaustive (kind %s)" % (tag, sorted({r.get("kind") for r in runs})),
+                        "a non-exhaustive search (Hypothesis, CrossHair with unconfirmed "
+                        "conditions) is 'no_counterexample_found'"))
+                vac = prop.get("vacuity") if isinstance(prop.get("vacuity"), dict) else {}
+                if vac.get("status") != "passed":
+                    issues.append(error("C17", "%s: vacuity.status=%r, not 'passed'"
+                                        % (tag, vac.get("status")),
+                                        "show the check can fail before reporting a pass"))
+                for key, want_mutant, what in (
+                        ("mutants", True, "a --mutant run that breaks the real code"),
+                        ("sanity", False, "a sanity harness that must fail")):
+                    good = 0
+                    for entry in vac.get(key) or []:
+                        p = _c17_entry_path(ctx, entry, target_dir)
+                        data, issue = (_c17_inspect(ctx, p, target_dir) if p
+                                       else (None, None))
+                        if not p:
+                            issues.append(error("C17", "%s: vacuity.%s entry %r not found"
+                                                % (tag, key, entry),
+                                                "cite the result JSON path"))
+                            continue
+                        if issue:
+                            continue
+                        if (data.get("mutant") is not None) != want_mutant:
+                            issues.append(error(
+                                "C17", "%s: vacuity.%s entry %s %s a --mutant run"
+                                % (tag, key, os.path.relpath(p, ctx.repo),
+                                   "is not" if want_mutant else "is"),
+                                "mutants come from run_code_check.py --mutant; sanity runs "
+                                "use the unmodified code"))
+                            continue
+                        if data.get("tool") != verifier:
+                            issues.append(error("C17", "%s: vacuity.%s entry %s uses %s, not "
+                                                "%s" % (tag, key, os.path.relpath(p, ctx.repo),
+                                                        data.get("tool"), verifier),
+                                                "check vacuity with the property's verifier"))
+                            continue
+                        if data.get("result") != "violation":
+                            issues.append(error(
+                                "C17", "%s: vacuity.%s entry %s has result %r; it must be a "
+                                "violation" % (tag, key, os.path.relpath(p, ctx.repo),
+                                               data.get("result")),
+                                "a mutant the check does not catch, or a sanity check that "
+                                "passes, means the property cannot fail: fix the harness"))
+                            continue
+                        good += 1
+                    if not good:
+                        issues.append(error("C17", "%s: no valid vacuity.%s (need %s)"
+                                            % (tag, key, what),
+                                            "see references/code-level-playbook.md section 4"))
+    return issues
+
+
+def _c17_rerun_limit(elapsed):
+    return min(1800, max(120, int(4 * elapsed) + 1))
+
+
+def check_c17_exec(ctx):
+    issues = []
+    for path, (target_dir, labels) in _c17_code_jsons(ctx).items():
+        if not labels:
+            continue
+        data, issue = _c17_inspect(ctx, path, target_dir)
+        if issue or data.get("result") not in ("pass", "violation"):
+            continue
+        who = ", ".join(sorted(set(labels)))
+        rel = os.path.relpath(path, ctx.repo)
+        limit = _c17_rerun_limit(_c16_number(data.get("elapsed_seconds")))
+        tmpdir = tempfile.mkdtemp(prefix="check_run_code_")
+        out_json = os.path.join(tmpdir, "rerun.json")
+        cwd = data.get("cwd") if isinstance(data.get("cwd"), str) else "."
+        cwd = cwd if os.path.isabs(cwd) else os.path.join(ctx.repo, cwd)
+        cmd = [sys.executable, RUN_CODE_CHECK, "--tool", data["tool"], "--out", out_json,
+               "--quiet", "--timeout", str(limit), "--cwd", cwd]
+        if isinstance(data.get("mutant"), dict):
+            cmd += ["--mutant", os.path.join(ctx.repo, data["mutant"]["patch"])]
+        cmd += ["--"] + [str(a) for a in data["argv"]]
+        try:
+            rc, out, err, timed_out = run_shell(ctx.repo, shlex.join(cmd), limit + 60,
+                                                env=tool_env(ctx.repo))
+            rerun, load_err = (load_json(out_json) if os.path.isfile(out_json)
+                               else (None, "no result JSON written"))
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        if rerun is None:
+            detail = (err or out or load_err or "").strip().splitlines()
+            issues.append(error(
+                "C17", "%s (%s): re-run failed to produce a result (%s)"
+                % (who, rel, detail[-1][:200] if detail else "exit %s" % rc),
+                "install the verifier (scripts/check_toolchain.sh --code) or pass --no-exec "
+                "to downgrade this to a WARNING"))
+            continue
+        for field in ("result", "violated") + (("exhaustive",) if data["result"] == "pass"
+                                               else ()):
+            if rerun.get(field) != data.get(field):
+                issues.append(error(
+                    "C17", "%s: re-running %s gives %s=%r, stored %r"
+                    % (who, rel, field, rerun.get(field), data.get(field)),
+                    "the stored result does not describe the current code or harness; re-run "
+                    "verification/rerun.sh and copy results from the new JSON"))
+                break
+    return issues
+
+
+def c17_skipped_warning(ctx):
+    n = sum(1 for _p, (_d, labels) in _c17_code_jsons(ctx).items() if labels)
+    if not n:
+        return None
+    return warn("C17", "--no-exec was given; C17 did not re-run the %d cited code-level "
+                "result(s)" % n, "run check_run.py without --no-exec before trusting this run")
+
+
+DIAGRAM_META_RE = re.compile(
+    r'<script type="application/json" id="vf-diagram-meta">(.*?)</script>', re.S)
+
+
+def check_c18(ctx):
+    issues = []
+    page = os.path.join(ctx.repo, "verification", "state-diagram.html")
+    render = ("run scripts/render_diagram.py <repo> after the last change to any model, cfg, "
+              "result, or diagram.json")
+    modeled = [t for t in ctx.targets if t.get("status") == "modeled"]
+    if not modeled and not os.path.isfile(page):
+        return issues
+    if not os.path.isfile(page):
+        return [error("C18", "verification/state-diagram.html not found", render)]
+    m = DIAGRAM_META_RE.search(read_text(page))
+    try:
+        meta = json.loads(m.group(1).replace("<\\/", "</")) if m else None
+    except ValueError:
+        meta = None
+    if not isinstance(meta, dict) or meta.get("generator") != render_diagram.GENERATOR:
+        return [error("C18", "verification/state-diagram.html was not written by "
+                      "render_diagram.py (no readable vf-diagram-meta block)",
+                      "never write or edit the page by hand; " + render)]
+    if meta.get("commit") != ctx.findings.get("commit"):
+        issues.append(warn("C18", "state-diagram.html was rendered at commit %r, findings.json "
+                           "is at %r" % (meta.get("commit"), ctx.findings.get("commit")),
+                           render + " so the page names the commit it describes"))
+    by_id = {e.get("id"): e for e in meta.get("targets") or [] if isinstance(e, dict)}
+    readme = read_text(os.path.join(ctx.repo, "verification", "README.md")) or ""
+    if "state-diagram.html" not in readme:
+        issues.append(warn("C18", "verification/README.md does not link state-diagram.html",
+                           "link the page from the README so a reader finds the diagrams"))
+    for t in modeled:
+        tid = str(t.get("id", "?"))
+        tdir = os.path.join(ctx.repo, "verification", "models", tid)
+        dpath = os.path.join(tdir, "diagram.json")
+        if not os.path.isfile(dpath):
+            issues.append(error("C18", "%s: no verification/models/%s/diagram.json" % (tid, tid),
+                                "write diagram.json (kind 'tla' for a TLA+ target, 'manual' "
+                                "otherwise) and " + render))
+            continue
+        spec, err = load_json(dpath)
+        if err or not isinstance(spec, dict):
+            issues.append(error("C18", "%s: diagram.json does not parse" % tid,
+                                "fix diagram.json"))
+            continue
+        has_tla = any(p.get("tool") == "tla" for p in t.get("properties") or [])
+        if has_tla and spec.get("kind") != "tla":
+            issues.append(error("C18", "%s: the target has a TLA+ model but diagram.json kind "
+                                "is %r" % (tid, spec.get("kind")),
+                                "use kind 'tla' so the diagram is derived from the checked "
+                                "spec, not drawn by hand"))
+        entry = by_id.get(tid)
+        if entry is None:
+            issues.append(error("C18", "%s: state-diagram.html has no section for this target"
+                                % tid, render))
+            continue
+        if entry.get("error"):
+            issues.append(error("C18", "%s: the diagram failed to render: %s"
+                                % (tid, entry["error"]),
+                                "fix diagram.json (or the projection) and " + render))
+            continue
+        if not entry.get("nodes"):
+            issues.append(error("C18", "%s: the diagram has no states" % tid, render))
+        expected = render_diagram.input_files(tdir, spec)
+        inputs = entry.get("inputs") if isinstance(entry.get("inputs"), dict) else {}
+        missing = [f for f in expected if f not in inputs]
+        stale = []
+        for f in expected:
+            p = os.path.join(tdir, f)
+            if f in inputs and (not os.path.isfile(p) or render_diagram.sha256_file(p)
+                                != inputs[f]):
+                stale.append(f)
+        if missing or stale:
+            issues.append(error("C18", "%s: state-diagram.html is stale (changed since "
+                                "rendering: %s)" % (tid, ", ".join(missing + stale)), render))
+        if spec.get("kind") == "tla":
+            violated = set()
+            for p in t.get("properties") or []:
+                if p.get("tool") == "tla" and p.get("result") == "violated":
+                    for run in p.get("runs") or []:
+                        if run.get("result") in VIOLATION_RESULTS and run.get("json"):
+                            violated.add(os.path.normpath(run["json"]))
+            shown = {os.path.normpath(os.path.join(os.path.relpath(tdir, ctx.repo), h))
+                     for h in spec.get("highlight") or []}
+            if violated and not violated & shown:
+                issues.append(warn("C18", "%s: no violating run is highlighted on the diagram"
+                                   % tid, "add a violating results/<cfg>.json to "
+                                   "diagram.json 'highlight' so the counterexample is drawn"))
+    return issues
+
+
+def _git_ok(repo, args):
+    p = subprocess.run(["git", "-C", repo] + args, capture_output=True, text=True)
+    return p.returncode == 0, p.stdout
+
+
+def _correspondence_sha(path):
+    for line in read_text(path).splitlines():
+        if "commit" in line.lower():
+            m = SHA_RE.search(line)
+            if m:
+                return m.group(0)
+    return None
+
+
+def check_c19(ctx):
+    if not is_reconcile_run(ctx.findings.get("invocation")):
+        return []
+    issues = []
+    head, _ = git_head(ctx.repo)
+    head = (head or "").strip()
+    readme = read_text(os.path.join(ctx.repo, "verification", "README.md")) or ""
+    if "Reconcile" not in readme:
+        issues.append(error("C19", "verification/README.md has no 'Reconcile' section",
+                            "add '## Reconcile' with each target's outcome, the commits read, "
+                            "what changed in the verification and why"))
+    findings = ctx.findings.get("findings") or []
+    for t in ctx.targets:
+        if t.get("status") != "modeled":
+            continue
+        tid = str(t.get("id", "?"))
+        tdir = os.path.join(ctx.repo, "verification", "models", tid)
+        rec = t.get("reconcile")
+        fix = "record the reconcile pass in targets[].reconcile (references/reconcile.md)"
+        if not isinstance(rec, dict):
+            issues.append(error("C19", "%s: no reconcile record" % tid, fix))
+            continue
+        outcome = set(rec.get("outcome") or [])
+        if not outcome or not outcome <= RECONCILE_OUTCOMES or (
+                len(outcome) > 1 and outcome != {"updated", "bug"}):
+            issues.append(error(
+                "C19", "%s: reconcile.outcome %r is not one of in_sync, updated, bug, blocked "
+                "(or updated + bug)" % (tid, sorted(outcome)), fix))
+            continue
+        frm = str(rec.get("from_commit") or "")
+        to = str(rec.get("to_commit") or "")
+        if not SHA_RE.fullmatch(frm):
+            issues.append(error("C19", "%s: reconcile.from_commit %r is not a full SHA"
+                                % (tid, frm), "use the sync commit recorded in "
+                                "CORRESPONDENCE.md (or the last commit that changed the "
+                                "verification files, and say so)"))
+            continue
+        ok, _ = _git_ok(ctx.repo, ["merge-base", "--is-ancestor", frm, "HEAD"])
+        if not ok:
+            issues.append(error("C19", "%s: from_commit %s is not an ancestor of HEAD"
+                                % (tid, frm[:12]), "use the sync commit the verification was "
+                                "last confirmed at"))
+            continue
+        blocked = outcome == {"blocked"}
+        if blocked:
+            if not str(rec.get("blocked_reason") or "").strip():
+                issues.append(error("C19", "%s: blocked without blocked_reason" % tid,
+                                    "say exactly why the check could not be brought back in "
+                                    "line or could not run"))
+            if to != frm:
+                issues.append(error("C19", "%s: a blocked check keeps its sync commit; "
+                                    "to_commit %s should equal from_commit %s"
+                                    % (tid, to[:12], frm[:12]),
+                                    "do not move the sync commit for a blocked check"))
+        elif to != head:
+            issues.append(error("C19", "%s: to_commit %s is not HEAD %s"
+                                % (tid, to[:12], head[:12]),
+                                "set to_commit to the commit you checked (HEAD)"))
+        corr = os.path.join(tdir, "CORRESPONDENCE.md")
+        stamp = _correspondence_sha(corr) if os.path.isfile(corr) else None
+        want = frm if blocked else head
+        if stamp != want:
+            issues.append(error(
+                "C19", "%s: CORRESPONDENCE.md sync commit is %s, expected %s"
+                % (tid, (stamp or "missing")[:12], want[:12]),
+                "a blocked check keeps the old sync commit; every other outcome moves it to "
+                "HEAD after the verification is confirmed to describe the code there"))
+        files = [f for f in (t.get("files") or []) + (rec.get("files_before") or [])
+                 if isinstance(f, str)]
+        ok, out = _git_ok(ctx.repo, ["rev-list", "%s..HEAD" % frm, "--"] + files) if files \
+            else (True, "")
+        must_read = [c for c in out.split() if c]
+        read = [str(c) for c in rec.get("commits_read") or []]
+        unread = [c for c in must_read if not any(r and c.startswith(r) for r in read)]
+        if unread:
+            issues.append(error(
+                "C19", "%s: %d commit(s) touching the covered files were not read: %s"
+                % (tid, len(unread), ", ".join(c[:12] for c in unread[:8])),
+                "read every commit from the sync commit to HEAD that touches covered code, and "
+                "list it in commits_read"))
+        changes = rec.get("changes") or []
+        classified = {str(c.get("commit") or "") for c in changes}
+        for c in read:
+            if not any(x and (x.startswith(c) or c.startswith(x)) for x in classified):
+                issues.append(error("C19", "%s: commit %s is in commits_read but has no "
+                                    "entry in changes" % (tid, c[:12]),
+                                    "classify every commit read: no_effect, shape_changed, "
+                                    "promise_changed (with evidence), or promise_maybe_broken"))
+        effects = set()
+        for i, c in enumerate(changes):
+            eff = c.get("effect")
+            effects.add(eff)
+            if eff not in CHANGE_EFFECTS:
+                issues.append(error("C19", "%s: changes[%d].effect %r is not one of %s"
+                                    % (tid, i, eff, sorted(CHANGE_EFFECTS)), fix))
+            if eff == "promise_changed" and not str(c.get("evidence") or "").strip():
+                issues.append(error(
+                    "C19", "%s: changes[%d] says the promise changed on purpose but cites no "
+                    "evidence" % (tid, i),
+                    "cite the doc comment, test, changelog, or commit message that says the "
+                    "new behavior is intended; without it the change is promise_maybe_broken"))
+            if eff == "promise_changed" and not (isinstance(c.get("property_change"), dict)
+                                                 and c["property_change"].get("old")
+                                                 and c["property_change"].get("new")):
+                issues.append(error(
+                    "C19", "%s: changes[%d] changes the promise but does not record the "
+                    "property's old and new wording" % (tid, i),
+                    "add property_change: {old, new}"))
+        if "in_sync" in outcome and effects - {"no_effect"}:
+            issues.append(error("C19", "%s: outcome in_sync but a change is %s"
+                                % (tid, sorted(effects - {"no_effect"})),
+                                "a change that alters what the verification describes makes "
+                                "the outcome updated (or bug)"))
+        if "updated" in outcome and not effects & {"shape_changed", "promise_changed"}:
+            issues.append(error("C19", "%s: outcome updated but no change is shape_changed or "
+                                "promise_changed" % tid,
+                                "classify the change that made you update the verification"))
+        if not blocked:
+            pre = rec.get("pre_update_runs") or []
+            if not pre:
+                issues.append(error("C19", "%s: no pre_update_runs" % tid,
+                                    "run every check once before changing anything and keep "
+                                    "the results under results/before/"))
+            for entry in pre:
+                p = resolve_repo_relative(ctx.repo, entry) or os.path.join(tdir, entry)
+                if not (p and os.path.isfile(p) and os.path.isfile(p[:-5] + ".log")
+                        and in_target_dir(p, os.path.join(tdir, "results", "before"))):
+                    issues.append(error(
+                        "C19", "%s: pre_update_runs entry %r is not a result JSON with its log "
+                        "under results/before/" % (tid, entry),
+                        "keep the before-update runs (run_tlc.sh or run_code_check.py --out "
+                        "results/before/<stem>.json)"))
+        if "updated" in outcome:
+            breaks = rec.get("post_update_break") or []
+            good = 0
+            for entry in breaks:
+                p = resolve_repo_relative(ctx.repo, entry) or os.path.join(tdir, entry)
+                data, err = load_json(p) if p and os.path.isfile(p) else (None, "missing")
+                result = (data or {}).get("result") if isinstance(data, dict) else None
+                if result in VIOLATION_RESULTS or result == "violation":
+                    good += 1
+                else:
+                    issues.append(error("C19", "%s: post_update_break entry %r is not a "
+                                        "violating result" % (tid, entry),
+                                        "break the new code the way the property guards "
+                                        "against and show the updated check catches it"))
+            if not good:
+                issues.append(error(
+                    "C19", "%s: outcome updated but no post_update_break shows the updated "
+                    "check can still fail" % tid,
+                    "run a mutant of the changed code (run_code_check.py --mutant, or a TLA+ "
+                    "mutant cfg of the changed action) and cite its violating result"))
+        if "bug" in outcome:
+            mine = [f for f in findings if tid in (f.get("targets") or [])
+                    and f.get("status") == "CONFIRMED"]
+            if not mine:
+                issues.append(error("C19", "%s: outcome bug but no CONFIRMED finding lists this "
+                                    "target" % tid,
+                                    "a bug is reported as a finding with a failing repro test"))
+            for f in mine:
+                if not SHA_RE.fullmatch(str(f.get("introduced_by") or "")):
+                    issues.append(error(
+                        "C19", "finding %s: a reconcile bug names the commit that introduced it "
+                        "(introduced_by, full SHA)" % f.get("id"),
+                        "find the first commit after from_commit where the counterexample "
+                        "replays against the code"))
+    return issues
+
+
 STATIC_CHECKS = [
     check_c01, check_c02, check_c03, check_c04, check_c05, check_c06, check_c07,
     check_c08, check_c09, check_c12, check_c13, check_c14, check_c15, check_c16_static,
+    check_c17, check_c18, check_c19,
 ]
-EXEC_CHECKS = [check_c10, check_c11, check_c16_exec]
+EXEC_CHECKS = [check_c10, check_c11, check_c16_exec, check_c17_exec]
 
 
 def print_text(issues):
@@ -2341,6 +2992,9 @@ def main():
             "run check_run.py without --no-exec before trusting this run",
         ))
         issues.append(c16_skipped_warning(ctx))
+        skipped = c17_skipped_warning(ctx)
+        if skipped:
+            issues.append(skipped)
     issues.sort(key=lambda i: (i["check"], i["level"]))
 
     if args.json:

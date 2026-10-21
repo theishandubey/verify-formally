@@ -1,0 +1,114 @@
+Kani Rust Verifier 0.68.0 (cargo plugin)
+CBMC 6.11.0
+   Compiling rk v0.1.0 (rk)
+warning: use of an unstable feature
+ --> <crate attribute>:1:12
+  |
+1 | #![feature(register_tool)]
+  |            ^^^^^^^^^^^^^
+  |
+  = note: requested on the command line with `--force-warn unstable-features`
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+Checking harness proofs::check_idx...
+CBMC 6.11.0 (cbmc-6.11.0)
+CBMC version 6.11.0 (cbmc-6.11.0) 64-bit x86_64 linux
+Reading GOTO program from file rk/target/kani/x86_64-unknown-linux-gnu/debug/build/rk/916d95d298227f41/out/rk-916d95d298227f41__RNvNtCsjxkfKhSxv6J_2rk6proofs9check_idx.out
+Generating GOTO Program
+Adding CPROVER library (x86_64)
+Removal of function pointers and virtual functions
+Generic Property Instrumentation
+Running with 16 object bits, 48 offset bits (user-specified)
+Starting Bounded Model Checking
+Runtime Symex: 0.00263115s
+size of program expression: 135 steps
+slicing removed 82 assignments
+Generated 12 VCC(s), 4 remaining after simplification
+Runtime Postprocess Equation: 2.7617e-05s
+Passing problem to propositional reduction
+converting SSA
+Runtime Convert SSA: 0.00136339s
+Running propositional reduction
+Post-processing
+Runtime Post-process: 8.163e-06s
+Solving with CaDiCaL 3.0.0
+1139 variables, 3752 clauses
+SAT checker: instance is SATISFIABLE
+Runtime Solver: 0.000119333s
+Runtime decision procedure: 0.001557s
+Running propositional reduction
+Solving with CaDiCaL 3.0.0
+1140 variables, 3753 clauses
+SAT checker: instance is SATISFIABLE
+Runtime Solver: 0.000236661s
+Runtime decision procedure: 0.000302124s
+Running propositional reduction
+Solving with CaDiCaL 3.0.0
+1141 variables, 3754 clauses
+SAT checker: instance is UNSATISFIABLE
+Runtime Solver: 2.241e-05s
+Runtime decision procedure: 6.1975e-05s
+
+RESULTS:
+Check 1: idx.assertion.1
+	 - Status: SUCCESS
+	 - Description: "attempt to calculate the remainder with a divisor of zero"
+	 - Location: src/lib.rs:1:45 in function idx
+
+Check 2: idx.arithmetic_overflow.1
+	 - Status: SUCCESS
+	 - Description: "attempt to calculate the remainder with a divisor of zero"
+	 - Location: src/lib.rs:1:45 in function idx
+
+Check 3: idx.assertion.2
+	 - Status: FAILURE
+	 - Description: "index out of bounds: the length is less than or equal to the given index"
+	 - Location: src/lib.rs:1:43 in function idx
+
+Check 4: idx.pointer_dereference.1
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer NULL"
+	 - Location: src/lib.rs:1:43 in function idx
+
+Check 5: idx.pointer_dereference.2
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer invalid"
+	 - Location: src/lib.rs:1:43 in function idx
+
+Check 6: idx.pointer_dereference.3
+	 - Status: SUCCESS
+	 - Description: "dereference failure: deallocated dynamic object"
+	 - Location: src/lib.rs:1:43 in function idx
+
+Check 7: idx.pointer_dereference.4
+	 - Status: SUCCESS
+	 - Description: "dereference failure: dead object"
+	 - Location: src/lib.rs:1:43 in function idx
+
+Check 8: idx.pointer_dereference.5
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer outside object bounds"
+	 - Location: src/lib.rs:1:43 in function idx
+
+Check 9: idx.pointer_dereference.6
+	 - Status: SUCCESS
+	 - Description: "dereference failure: invalid integer address"
+	 - Location: src/lib.rs:1:43 in function idx
+
+Check 10: idx.array_bounds.1
+	 - Status: SUCCESS
+	 - Description: "index out of bounds: the length is less than or equal to the given index"
+	 - Location: src/lib.rs:1:43 in function idx
+
+
+SUMMARY:
+ ** 1 of 10 failed
+Failed Checks: index out of bounds: the length is less than or equal to the given index
+ File: "src/lib.rs", line 1, in idx
+
+VERIFICATION:- FAILED
+Verification Time: 0.029068042s
+
+Manual Harness Summary:
+Verification failed for - proofs::check_idx
+Complete - 0 successfully verified harnesses, 1 failures, 1 total.

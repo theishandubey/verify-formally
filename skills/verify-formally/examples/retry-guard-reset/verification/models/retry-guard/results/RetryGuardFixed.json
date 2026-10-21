@@ -22,7 +22,7 @@
   "trace": [],
   "tlc_version": "2.19",
   "tla2tools_release": "1.7.4",
-  "elapsed_seconds": 0.153,
+  "elapsed_seconds": 0.533,
   "raw_log": "verification/models/retry-guard/results/RetryGuardFixed.log",
   "exit_code": 0,
   "spec": "verification/models/retry-guard/RetryGuard.tla",

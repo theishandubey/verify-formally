@@ -99,10 +99,12 @@ Go through this before trusting any result, and again before reproducing a count
 
 ## 4. Drift and reconcile
 
-The SHA in `CORRESPONDENCE.md` is the model's validity stamp.
-On `/verify-formally reconcile`, run `git diff --stat <SHA>..HEAD -- <files in the table>`.
-If a mapped file changed: re-read each mapped line range, update line numbers, update the model if behavior changed, re-run the checker and the repro tests, then update the SHA.
+The SHA in `CORRESPONDENCE.md` is the sync commit: the commit at which the model or harness was last confirmed to describe the code.
+Move it only after confirming that, never just because a run passed.
+When code changes after it, the verification can keep passing while describing code that no longer exists; `/verify-formally reconcile` brings it back in line ([reconcile.md](reconcile.md)): it runs every check before changing anything, reads every commit to covered code since the sync commit (including moved and renamed code and new code that writes the guarded state), classifies each change, updates the model from the code, re-runs, shows each updated check can still fail, and judges each failure as drift or bug.
 A model whose code changed and was not re-checked is stale and is reported as such.
+
+For a code-level target the table maps the harness: each real function it calls (`file:line`), each assumption on its inputs and that assumption's source, each stub and the real behavior it stands for, and the bounds ([code-level-playbook.md](code-level-playbook.md) section 7).
 
 ## 5. When correspondence fails
 

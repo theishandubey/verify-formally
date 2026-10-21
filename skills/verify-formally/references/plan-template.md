@@ -119,6 +119,7 @@ All must hold:
 - [ ] Repro command passes.
 - [ ] `<full test command>` exits 0 with counts >= baseline plus the new tests.
 - [ ] `run_tlc.sh <Spec>.tla Plan<NNN>.cfg` reports `pass` (unchanged model; confirms the fix matches the modeled fix).
+- [ ] For a code-level finding: `run_code_check.py <the recorded command>` reports `pass` with `exhaustive: true` (or, for a non-exhaustive verifier, no counterexample) on the fixed code, with the harness and bounds unchanged.
 - [ ] Lint/format commands exit 0.
 - [ ] No files outside the in-scope list are modified (`git status`).
 - [ ] `plans/README.md` row updated.

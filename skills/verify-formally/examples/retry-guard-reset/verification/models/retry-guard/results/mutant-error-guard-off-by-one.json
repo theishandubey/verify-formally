@@ -1,0 +1,45 @@
+{
+  "result": "violation",
+  "exhaustive": false,
+  "violated": [
+    "verification/models/retry-guard/prop_retry_guard.py::test_error_streak_gives_up_exactly"
+  ],
+  "failed_checks": [
+    {
+      "id": "verification/models/retry-guard/prop_retry_guard.py::test_error_streak_gives_up_exactly",
+      "description": "FAILED verification/models/retry-guard/prop_retry_guard.py::test_error_streak_gives_up_exactly",
+      "location": "verification/models/retry-guard/prop_retry_guard.py"
+    }
+  ],
+  "unwinding_failures": [],
+  "checks_total": 1,
+  "counterexample": "AssertionError: StreakGivesUp violated: GiveUp('gave up after 2 errors, 0 timeouts') after 2 calls with max_errors=1\nassert (True and 2 == 1)\n+  where True = isinstance(GiveUp('gave up after 2 errors, 0 timeouts'), GiveUp)\n+  and   2 = <prop_retry_guard.ScriptedOp object at 0x7f140aa5ef10>.calls\nFailing test case: test_error_streak_gives_up_exactly(\n# The test always failed when commented parts were varied together.\nmax_errors=1,  # or any other generated value\nmax_timeouts=1,  # or any other generated value\n)",
+  "test_counts": {
+    "failed": 1
+  },
+  "kind": "generated_inputs",
+  "generator": "run_code_check.py",
+  "tool": "hypothesis",
+  "tool_version": "pytest 9.1.1 hypothesis 6.170.5",
+  "argv": [
+    ".venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "verification/models/retry-guard/prop_retry_guard.py::test_error_streak_gives_up_exactly"
+  ],
+  "cwd": ".",
+  "mutant": {
+    "patch": "verification/models/retry-guard/mutants/error-guard-off-by-one.patch",
+    "sha256": "74e608699de01e659fcac55c994c86bd17dfcc7821702fc950dd17111143cf12",
+    "files": [
+      "retry.py"
+    ]
+  },
+  "exit_code": 1,
+  "elapsed_seconds": 0.567,
+  "raw_log": "verification/models/retry-guard/results/mutant-error-guard-off-by-one.log",
+  "command": "scripts/run_code_check.py --tool hypothesis --quiet --timeout 600 --out verification/models/retry-guard/results/mutant-error-guard-off-by-one.json --mutant verification/models/retry-guard/mutants/error-guard-off-by-one.patch --cwd . -- .venv/bin/python -m pytest -q -p no:cacheprovider verification/models/retry-guard/prop_retry_guard.py::test_error_streak_gives_up_exactly"
+}

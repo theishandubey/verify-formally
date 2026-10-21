@@ -58,11 +58,11 @@ else
   record "tlc-buggy-liveness" FAIL "got result=$live_result"
 fi
 
-if [ ! -x "$venv/bin/python" ]; then
+if [ ! -x "$venv/bin/python" ] || ! "$venv/bin/python" -c 'import pytest, hypothesis' 2>/dev/null; then
   echo "== bootstrapping venv =="
   uv="$(command -v uv 2>/dev/null || echo "$HOME/.local/bin/uv")"
-  "$uv" venv "$venv" > /dev/null 2>&1
-  "$uv" pip install --python "$venv/bin/python" pytest > /dev/null 2>&1
+  [ -x "$venv/bin/python" ] || "$uv" venv "$venv" > /dev/null 2>&1
+  "$uv" pip install --python "$venv/bin/python" pytest hypothesis > /dev/null 2>&1
 fi
 
 echo "== pytest: buggy retry.py =="
@@ -171,43 +171,66 @@ else
   record "lean-audit" FAIL "got result=$lean_result exit=$lean_exit"
 fi
 
-echo "== rerun.sh (regenerates every result JSON in a scratch copy; committed files are untouched) =="
+# A scratch git repository laid out like the project this example stands for (retry.py at its
+# root), so rerun.sh's code-level checks can run, including run_code_check.py --mutant.
+make_scratch_repo() {
+  local dir="$1"
+  git init -q "$dir"
+  git -C "$dir" config user.email "verify-example@example.com"
+  git -C "$dir" config user.name "verify-formally example"
+  printf '.venv\n' > "$dir/.gitignore"
+  cp "$here/retry.py" "$here/fix.patch" "$dir/"
+  git -C "$dir" add retry.py fix.patch .gitignore
+  git -C "$dir" commit -q -m "add call_with_retry retry loop" > /dev/null
+}
+
+echo "== rerun.sh (regenerates every result in a scratch git repository; committed files are untouched) =="
 rerun_work="$(mktemp -d "${TMPDIR:-/tmp}/retry_guard_reset_rerun.XXXXXX")"
 tmp_dirs+=("$rerun_work")
+make_scratch_repo "$rerun_work"
 cp -Rp "$here/verification" "$rerun_work/verification"
-rerun_status=0
-for spec in "$rerun_work"/verification/models/*/*.tla; do
-  dir=$(dirname "$spec")
-  for cfg in "$dir"/*.cfg "$dir"/sanity/*.cfg "$dir"/mutants/*.cfg; do
-    [ -f "$cfg" ] || continue
-    stem=$(basename "$cfg" .cfg); sub=$(basename "$(dirname "$cfg")")
-    case "$sub" in sanity) out="$dir/results/sanity-$stem.json" ;; mutants) out="$dir/results/mutant-$stem.json" ;; *) out="$dir/results/$stem.json" ;; esac
-    "$scripts_dir/run_tlc.sh" "$spec" "$cfg" --out "$out" --workers 1 --quiet || rerun_status=1
-  done
-done
-"$scripts_dir/lean_audit.sh" "$rerun_work/verification/lean" --out "$rerun_work/verification/lean/results.json" --quiet > /tmp/rgr_rerun_lean.$$ 2>&1 || rerun_status=1
+ln -s "$venv" "$rerun_work/.venv"
+rm -f "$rerun_work"/verification/models/*/results/*.json
+VERIFY_SKILL_DIR="$(cd "$scripts_dir/.." && pwd)" "$rerun_work/verification/rerun.sh" > /tmp/rgr_rerun.$$ 2>&1
+rerun_status=$?
 if [ "$rerun_status" -eq 0 ]; then
-  record "rerun-sh" FAIL "every cfg passed in the scratch copy, but the buggy/mutant/sanity cfgs are supposed to fail"
+  record "rerun-sh" FAIL "every check passed in the scratch copy, but the buggy/mutant/sanity checks are supposed to fail"
+elif grep -rq '"result": "error"\|"result": "timeout"' "$rerun_work/verification/models"/*/results/*.json "$rerun_work/verification/lean/results.json" 2>/dev/null \
+    || [ ! -f "$rerun_work/verification/state-diagram.html" ]; then
+  record "rerun-sh" FAIL "rerun reported an error/timeout result or wrote no state diagram; see output"
+  cat /tmp/rgr_rerun.$$ >&2
 else
-  if grep -rq '"result": "error"\|"result": "timeout"' "$rerun_work/verification/models"/*/results/*.json "$rerun_work/verification/lean/results.json" 2>/dev/null; then
-    record "rerun-sh" FAIL "rerun reported an error/timeout result; see output"
-    cat /tmp/rgr_rerun_lean.$$ >&2
-  else
-    record "rerun-sh" PASS "buggy/mutant/sanity cfgs failed as expected, fixed/Plan001 cfgs passed (scratch copy only; verification/ on disk is untouched)"
-  fi
+  record "rerun-sh" PASS "buggy/mutant/sanity checks failed as expected, fixed/Plan001 cfgs passed, diagram rendered (scratch copy only; verification/ on disk is untouched)"
 fi
-rm -f /tmp/rgr_rerun_lean.$$
+rm -f /tmp/rgr_rerun.$$
+
+echo "== code-level checks (results from the rerun.sh scratch copy) =="
+code_detail="$(python3 - "$rerun_work/verification/models/retry-guard/results" <<'PYEOF'
+import json, os, sys
+want = {"CallsBounded": "violation", "StreakGivesUp": "pass",
+        "sanity-StreakGivesUp": "violation", "mutant-error-guard-off-by-one": "violation"}
+bad = []
+for stem, expected in want.items():
+    try:
+        got = json.load(open(os.path.join(sys.argv[1], stem + ".json"))).get("result")
+    except (OSError, ValueError) as e:
+        got = "unreadable"
+    if got != expected:
+        bad.append("%s=%s (want %s)" % (stem, got, expected))
+print("; ".join(bad))
+sys.exit(1 if bad else 0)
+PYEOF
+)"
+if [ $? -eq 0 ]; then
+  record "code-level" PASS "CallsBounded violated on the real code; StreakGivesUp passes, its sanity test fails, and the real-code mutant is caught"
+else
+  record "code-level" FAIL "$code_detail"
+fi
 
 echo "== check_run.py against a fresh git copy of the committed results =="
 check_work="$(mktemp -d "${TMPDIR:-/tmp}/retry_guard_reset_checkrun.XXXXXX")"
 tmp_dirs+=("$check_work")
-git init -q "$check_work"
-git -C "$check_work" config user.email "verify-example@example.com"
-git -C "$check_work" config user.name "verify-formally example"
-printf '.venv\n' > "$check_work/.gitignore"
-cp "$here/retry.py" "$here/fix.patch" "$check_work/"
-git -C "$check_work" add retry.py fix.patch .gitignore
-git -C "$check_work" commit -q -m "add call_with_retry retry loop" > /dev/null
+make_scratch_repo "$check_work"
 check_commit="$(git -C "$check_work" rev-parse HEAD)"
 
 cp -Rp "$here/verification" "$check_work/verification"
@@ -226,6 +249,9 @@ data["commit"] = sha
 with open(path, "w") as f:
     json.dump(data, f, indent=2)
 PYEOF
+
+# The page stamps the commit it was rendered at; the scratch repository's commit is new.
+python3 "$scripts_dir/render_diagram.py" "$check_work" > /dev/null
 
 check_out="$(python3 "$scripts_dir/check_run.py" "$check_work" 2>&1)"
 check_exit=$?

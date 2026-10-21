@@ -1,0 +1,13 @@
+{
+  "kind": "tla",
+  "spec": "RetryGuard.tla",
+  "cfg": "RetryGuard.cfg",
+  "project": ["status", "errors", "timeouts"],
+  "highlight": ["results/RetryGuardLiveness.json"],
+  "actions": {
+    "SuccessStep": "retry.py:24 (op() returns)",
+    "TransientStep": "retry.py:26-31 (TransientError: errors += 1, timeouts = 0)",
+    "TimeoutStep": "retry.py:32-37 (Timeout: timeouts += 1, errors = 0)",
+    "Done": "retry.py (call_with_retry has returned or raised)"
+  }
+}

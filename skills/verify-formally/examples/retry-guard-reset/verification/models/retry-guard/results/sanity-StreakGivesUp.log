@@ -1,0 +1,32 @@
+@@verify-formally run_code_check tool=hypothesis
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________________________ test_error_streak_sanity ___________________________
+
+    @SETTINGS
+>   @given(LIMITS, LIMITS)
+                   ^^^
+
+verification/models/retry-guard/prop_retry_guard.py:75: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+max_errors = 1, max_timeouts = 1
+
+    @SETTINGS
+    @given(LIMITS, LIMITS)
+    def test_error_streak_sanity(max_errors, max_timeouts):
+        op = ScriptedOp(["transient"] * (max_errors + max_timeouts + 2), cap=100)
+        run(op, max_errors, max_timeouts)
+>       assert False, "sanity: the StreakGivesUp harness reaches its end"
+E       AssertionError: sanity: the StreakGivesUp harness reaches its end
+E       assert False
+E       Failing test case: test_error_streak_sanity(
+E           # The test always failed when commented parts were varied together.
+E           max_errors=1,  # or any other generated value
+E           max_timeouts=1,  # or any other generated value
+E       )
+
+verification/models/retry-guard/prop_retry_guard.py:79: AssertionError
+=========================== short test summary info ============================
+FAILED verification/models/retry-guard/prop_retry_guard.py::test_error_streak_sanity
+1 failed in 0.36s

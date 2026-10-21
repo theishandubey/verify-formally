@@ -2,7 +2,8 @@
 
 - **Code**: this repo, `retry.py`, at commit `7cc0dcad4bd2f8a9bdd48121237218153bf847c2` (`verification/findings.json`'s `commit` field carries the exact value for the run being validated; `run_example.sh`'s `check-run` step re-stamps a fresh commit in its own temp copy so `scripts/check_run.py` can validate against a real git repository)
 - **Model**: `RetryGuard.tla` (+ `RetryGuard.cfg`, `RetryGuardLiveness.cfg`, `RetryGuardFixed.cfg`, `RetryGuardFixedSmallBudget.cfg`, `Plan001.cfg`, `sanity/ReachesGaveUp.cfg`, `sanity/ReachesGaveUpFixed.cfg`, `sanity/ReachesGaveUpFixedSmall.cfg`, `mutants/RetryGuardFixedMutant.cfg`, `mutants/RetryGuardTerminationMutant.cfg`), `verification/lean/RetryGuard/Model.lean`
-- **Property in plain words**: `BoundedAttempts` - the total number of calls to `op()` never exceeds `max_errors + max_timeouts`. `Termination` - `call_with_retry` always eventually returns or raises, no matter what `op()` does.
+- **Code-level harness**: `prop_retry_guard.py` (Hypothesis property tests that import the real `retry.py`), with the real-code mutant `mutants/error-guard-off-by-one.patch`
+- **Property in plain words**: `BoundedAttempts` - the total number of calls to `op()` never exceeds `max_errors + max_timeouts`. `Termination` - `call_with_retry` always eventually returns or raises, no matter what `op()` does. `CallsBoundedOnRealCode` - `BoundedAttempts`, checked on the real code. `StreakGivesUp` - `max_errors` consecutive `TransientError`s raise `GiveUp` after exactly `max_errors` calls.
 
 ## State
 
@@ -55,6 +56,19 @@
 |---|---|---|
 | `MutantNoIncrement` | vacuity mutant for `Termination` only: when `TRUE`, `NextAttempts` never increments `attempts`, so `Fixed`'s guard is syntactically present but can never fire - the fixed model degenerates to the buggy model's give-up condition by a different mechanism than flipping `Fixed` off | none; this models a hypothetical bug where the fix ships with its counter never wired up (the increment silently dropped), not any code that exists |
 | `MutantAttemptsStrict` | vacuity mutant for `BoundedAttempts` only: when `TRUE`, `AttemptsGuard(a)` uses `a > MaxAttempts` instead of `a >= MaxAttempts` - the fix's own new guard is present but off by one, a different mechanism than turning `Fixed` off | none; this models a hypothetical bug where `fix.patch`'s `attempts >= max_attempts` shipped as `attempts > max_attempts` instead |
+
+## Code-level harness (`prop_retry_guard.py`)
+
+| Harness part | Code | Notes |
+|---|---|---|
+| `from retry import ... call_with_retry` | `retry.py:9-22`, imported unmodified (the module puts the repository root on `sys.path`) | no copy of the function; a change to `retry.py` changes what the harness checks |
+| `ScriptedOp` | the `op` argument of `call_with_retry` (`retry.py:9`, called at `retry.py:14`) | environment only: raises the scripted `TransientError`/`TimeoutError` in order, then returns `"ok"` |
+| `ScriptedOp.cap` | none (harness safety stop) | raises `RuntimeError` after `max_errors + max_timeouts + 1` calls so a runaway retry ends the example; `RuntimeError` is not caught by `retry.py:15` or `retry.py:18`, so it only ends a run that has already broken the property |
+| `LIMITS = st.integers(1, 4)` | `max_errors`, `max_timeouts` (`retry.py:9`) | assumption: positive limits; `0` (give up before the first retry) is not generated |
+| `st.lists(..., max_size=12)` | the sequence of `op()` outcomes | bound: at most 12 failures before success; the shortest violation needs `max_errors + max_timeouts + 1 <= 9` |
+| `derandomize=True, max_examples=300` | none | same examples on every run, so `check_run.py`'s re-run reproduces the stored result; a search, not a proof |
+| sanity `test_error_streak_sanity` | same inputs as `test_error_streak_gives_up_exactly` | ends in `assert False`; it must fail, showing the strategy generates inputs and the call returns |
+| mutant `error-guard-off-by-one.patch` | `retry.py:21` `errors >= max_errors` becomes `errors > max_errors` | `StreakGivesUp` must catch it (one call too many) |
 
 ## Not modeled
 

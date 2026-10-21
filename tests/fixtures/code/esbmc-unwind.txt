@@ -1,0 +1,16 @@
+ESBMC version 7.6.1 64-bit x86_64 linux
+Parsing rb.c
+Starting Bounded Model Checking
+Building error trace
+
+[Counterexample]
+
+
+State 1 file rb.c line 5 column 30 function harness thread 0
+----------------------------------------------------
+Violated property:
+  file rb.c line 5 column 30 function harness
+  unwinding assertion loop 1
+
+
+VERIFICATION FAILED
