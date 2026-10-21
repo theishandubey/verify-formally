@@ -1829,6 +1829,37 @@ open(p, "w").write(open(p).read().replace("## Reconcile", "## Upkeep"))
 PYEOF
 check_case "c19-readme-without-reconcile-section-caught" "$dir" "1" "C19" "Reconcile" --no-exec
 
+echo "== evaluation follow-ups: C07 violated-only, missing README, summary line =="
+dir="$(make_copy c07-violated-only-property-needs-no-mutant)"
+prop_edit "$dir" LeasesReleased 'p["runs"] = [p["runs"][0]]; p["vacuity"]["mutants"] = []'
+check_lines "c07-violated-only-property-needs-no-mutant" "$dir" "0" "--no-exec" "!ERROR|C07|"
+
+dir="$(make_copy c07-passing-run-still-needs-mutant)"
+prop_edit "$dir" LeasesReleased 'p["vacuity"]["mutants"] = []'
+check_case "c07-passing-run-still-needs-mutant" "$dir" "1" "C07" "vacuity.mutants is empty" --no-exec
+
+dir="$(make_copy c07-buggy-rerun-as-mutant-still-caught)"
+prop_edit "$dir" LeasesReleased 'p["vacuity"]["mutants"] = ["Spec.cfg: invariant_violation"]'
+check_case "c07-buggy-rerun-as-mutant-still-caught" "$dir" "1" "C07" "same cfg as the buggy run" --no-exec
+
+dir="$(make_copy missing-readme-reported-not-crashed)"
+rm -f "$dir/verification/README.md"
+out="$(run_checker "$dir" --no-exec 2>&1)"
+if [ $? = 1 ] && ! grep -q Traceback <<<"$out" && grep -q "^\[ERROR\] C12: verification/README.md not found" <<<"$out"; then
+  pass "missing-readme-reported-not-crashed"
+else
+  fail "missing-readme-reported-not-crashed"
+  echo "$out" | sed 's/^/    /'
+fi
+
+out="$(run_checker "$good" --no-exec 2>&1)"
+if tail -1 <<<"$out" | grep -qE '^check_run.py: OK, 0 error\(s\), [0-9]+ warning\(s\)$'; then
+  pass "summary-line-on-success"
+else
+  fail "summary-line-on-success"
+  echo "$out" | tail -3 | sed 's/^/    /'
+fi
+
 echo ""
 echo "$pass_count passed, $fail_count failed"
 [ "$fail_count" -eq 0 ]
