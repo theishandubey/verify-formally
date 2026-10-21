@@ -91,11 +91,14 @@
 #        is a WARNING
 #   C19  (reconcile runs) every modeled target has a reconcile record: outcome in_sync, updated, bug,
 #        blocked (or updated + bug); from_commit is an ancestor of HEAD; to_commit and the
-#        CORRESPONDENCE.md sync commit are HEAD, or both stay at from_commit for blocked (with
-#        a blocked_reason); every commit from from_commit to HEAD touching the target's files
-#        is in commits_read and classified in changes, promise_changed with evidence and the
-#        old and new property wording; pre_update_runs exist under results/before/; updated
-#        needs a violating post_update_break; bug needs a CONFIRMED finding on the target
+#        CORRESPONDENCE.md sync commit (its **Code** line) are HEAD, or both stay at
+#        from_commit for blocked (with a blocked_reason); every commit from from_commit to HEAD
+#        touching the target's files, files_before, or a file CORRESPONDENCE.md cites is in
+#        commits_read (SHAs of 7+ hex digits) and classified in changes (promise_changed with
+#        evidence and the old and new property wording; coverage_gap with a note);
+#        pre_update_runs exist under results/before/ (WARNING when fewer than half the current
+#        results have one); updated needs a violating post_update_break outside
+#        results/before/ and newer than the model; bug needs a CONFIRMED finding on the target
 #        naming introduced_by; the README has a Reconcile section
 import argparse
 import glob
@@ -129,7 +132,8 @@ PROPERTY_RESULTS = {
 }
 PROPERTY_TOOLS = {"tla", "lean", "code"}
 RECONCILE_OUTCOMES = {"in_sync", "updated", "bug", "blocked"}
-CHANGE_EFFECTS = {"no_effect", "shape_changed", "promise_changed", "promise_maybe_broken"}
+CHANGE_EFFECTS = {"no_effect", "shape_changed", "promise_changed", "promise_maybe_broken",
+                  "coverage_gap"}
 SHA_RE = re.compile(r"\b[0-9a-f]{40}\b")
 TARGET_STATUSES = {"modeled", "not_modeled"}
 SEVERITIES = {"high", "medium", "low"}
@@ -2857,12 +2861,28 @@ def _git_ok(repo, args):
 
 
 def _correspondence_sha(path):
-    for line in read_text(path).splitlines():
-        if "commit" in line.lower():
-            m = SHA_RE.search(line)
-            if m:
-                return m.group(0)
+    """The sync commit: the SHA on the '- **Code**: ... at commit <SHA>' line, else the first
+    line naming a commit."""
+    lines = read_text(path).splitlines()
+    for wanted in (lambda l: l.lstrip("- ").startswith("**Code**"),
+                   lambda l: "commit" in l.lower()):
+        for line in lines:
+            if wanted(line):
+                m = SHA_RE.search(line)
+                if m:
+                    return m.group(0)
     return None
+
+
+def _correspondence_files(repo, path):
+    """Repository files CORRESPONDENCE.md cites as file:line (they are covered code too)."""
+    found = []
+    for m in re.finditer(r"([\w./-]+\.\w+):\d+", read_text(path)):
+        rel = m.group(1).lstrip("./")
+        if rel not in found and os.path.isfile(os.path.join(repo, rel)) and not rel.startswith(
+                "verification/"):
+            found.append(rel)
+    return found
 
 
 def check_c19(ctx):
@@ -2935,11 +2955,19 @@ def check_c19(ctx):
                 "HEAD after the verification is confirmed to describe the code there"))
         files = [f for f in (t.get("files") or []) + (rec.get("files_before") or [])
                  if isinstance(f, str)]
+        if os.path.isfile(corr):
+            files += [f for f in _correspondence_files(ctx.repo, corr) if f not in files]
         ok, out = _git_ok(ctx.repo, ["rev-list", "%s..HEAD" % frm, "--"] + files) if files \
             else (True, "")
         must_read = [c for c in out.split() if c]
         read = [str(c) for c in rec.get("commits_read") or []]
-        unread = [c for c in must_read if not any(r and c.startswith(r) for r in read)]
+        short = [c for c in read if not re.fullmatch(r"[0-9a-f]{7,40}", c)]
+        if short:
+            issues.append(error("C19", "%s: commits_read entries %r are not commit SHAs of at "
+                                "least 7 hex digits" % (tid, short[:4]),
+                                "record full SHAs (git log --format=%H)"))
+        read = [c for c in read if c not in short]
+        unread = [c for c in must_read if not any(c.startswith(r) for r in read)]
         if unread:
             issues.append(error(
                 "C19", "%s: %d commit(s) touching the covered files were not read: %s"
@@ -2947,9 +2975,10 @@ def check_c19(ctx):
                 "read every commit from the sync commit to HEAD that touches covered code, and "
                 "list it in commits_read"))
         changes = rec.get("changes") or []
-        classified = {str(c.get("commit") or "") for c in changes}
+        classified = {str(c.get("commit") or "") for c in changes
+                      if re.fullmatch(r"[0-9a-f]{7,40}", str(c.get("commit") or ""))}
         for c in read:
-            if not any(x and (x.startswith(c) or c.startswith(x)) for x in classified):
+            if not any(x.startswith(c) or c.startswith(x) for x in classified):
                 issues.append(error("C19", "%s: commit %s is in commits_read but has no "
                                     "entry in changes" % (tid, c[:12]),
                                     "classify every commit read: no_effect, shape_changed, "
@@ -2967,6 +2996,11 @@ def check_c19(ctx):
                     "evidence" % (tid, i),
                     "cite the doc comment, test, changelog, or commit message that says the "
                     "new behavior is intended; without it the change is promise_maybe_broken"))
+            if eff == "coverage_gap" and not str(c.get("note") or "").strip():
+                issues.append(error(
+                    "C19", "%s: changes[%d] is a coverage_gap without a note" % (tid, i),
+                    "say what behavior the change touched that no property covered, and "
+                    "which property (if any) now covers it"))
             if eff == "promise_changed" and not (isinstance(c.get("property_change"), dict)
                                                  and c["property_change"].get("old")
                                                  and c["property_change"].get("new")):
@@ -2979,7 +3013,8 @@ def check_c19(ctx):
                                 % (tid, sorted(effects - {"no_effect"})),
                                 "a change that alters what the verification describes makes "
                                 "the outcome updated (or bug)"))
-        if "updated" in outcome and not effects & {"shape_changed", "promise_changed"}:
+        if "updated" in outcome and not effects & {"shape_changed", "promise_changed",
+                                                   "coverage_gap"}:
             issues.append(error("C19", "%s: outcome updated but no change is shape_changed or "
                                 "promise_changed" % tid,
                                 "classify the change that made you update the verification"))
@@ -2989,6 +3024,15 @@ def check_c19(ctx):
                 issues.append(error("C19", "%s: no pre_update_runs" % tid,
                                     "run every check once before changing anything and keep "
                                     "the results under results/before/"))
+            current = [p for p in glob.glob(os.path.join(tdir, "results", "*.json"))]
+            befores = {os.path.basename(p) for p in glob.glob(
+                os.path.join(tdir, "results", "before", "*.json"))}
+            if pre and len(befores) < len(current) // 2:
+                issues.append(warn(
+                    "C19", "%s: %d before-update result(s) for %d current result(s); step 2 runs "
+                    "every check before changing anything" % (tid, len(befores), len(current)),
+                    "keep a results/before/ run of every cfg and harness that existed at the "
+                    "sync commit"))
             for entry in pre:
                 p = resolve_repo_relative(ctx.repo, entry) or os.path.join(tdir, entry)
                 if not (p and os.path.isfile(p) and os.path.isfile(p[:-5] + ".log")
@@ -3001,10 +3045,25 @@ def check_c19(ctx):
         if "updated" in outcome:
             breaks = rec.get("post_update_break") or []
             good = 0
+            models = [f for f in glob.glob(os.path.join(tdir, "*.tla")) + glob.glob(
+                os.path.join(tdir, "*.*")) if not f.endswith((".md", ".json"))]
+            newest_model = max((os.path.getmtime(f) for f in models), default=0)
             for entry in breaks:
                 p = resolve_repo_relative(ctx.repo, entry) or os.path.join(tdir, entry)
                 data, err = load_json(p) if p and os.path.isfile(p) else (None, "missing")
                 result = (data or {}).get("result") if isinstance(data, dict) else None
+                if p and in_target_dir(p, os.path.join(tdir, "results", "before")):
+                    issues.append(error(
+                        "C19", "%s: post_update_break entry %r is a before-update result" % (
+                            tid, entry),
+                        "break the UPDATED model or code and cite that new result"))
+                    continue
+                if p and os.path.isfile(p) and os.path.getmtime(p) < newest_model:
+                    issues.append(error(
+                        "C19", "%s: post_update_break entry %r is older than the updated model "
+                        "or harness" % (tid, entry),
+                        "re-run the break against the updated model after the last edit"))
+                    continue
                 if result in VIOLATION_RESULTS or result == "violation":
                     good += 1
                 else:
@@ -3025,13 +3084,13 @@ def check_c19(ctx):
                 issues.append(error("C19", "%s: outcome bug but no CONFIRMED finding lists this "
                                     "target" % tid,
                                     "a bug is reported as a finding with a failing repro test"))
-            for f in mine:
-                if not SHA_RE.fullmatch(str(f.get("introduced_by") or "")):
-                    issues.append(error(
-                        "C19", "finding %s: a reconcile bug names the commit that introduced it "
-                        "(introduced_by, full SHA)" % f.get("id"),
-                        "find the first commit after from_commit where the counterexample "
-                        "replays against the code"))
+            if mine and not any(SHA_RE.fullmatch(str(f.get("introduced_by") or ""))
+                                for f in mine):
+                issues.append(error(
+                    "C19", "%s: outcome bug, but no CONFIRMED finding on this target names the "
+                    "commit that introduced it (introduced_by, full SHA)" % tid,
+                    "set introduced_by on the finding this reconcile found: the first commit "
+                    "after from_commit at which its repro fails"))
     return issues
 
 

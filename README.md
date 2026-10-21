@@ -134,7 +134,7 @@ The checker scripts decide what counts as "pass" and "proved", so they are teste
 ```bash
 tests/test_scripts.sh            # run_tlc.sh and lean_audit.sh: 95 cases over adversarial TLA+ and Lean fixtures
 tests/test_code_and_diagram.sh   # run_code_check.py (recorded and real verifier output), render_diagram.py, and check_run.py on the C example: 66 cases
-tests/test_check_run.sh          # check_run.py: 147 cases, a generated run and variants built to fool it
+tests/test_check_run.sh          # check_run.py: 159 cases, a generated run and variants built to fool it
 ```
 
 `tests/test_check_run.sh` uses the worked example's virtualenv (pytest and hypothesis); run the example once first to create it.

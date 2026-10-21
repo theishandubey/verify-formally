@@ -1766,7 +1766,7 @@ check_case "c19-updated-without-break-caught" "$dir" "1" "C19" "can still fail" 
 
 dir="$(make_copy c19-updated-with-passing-break-caught)"
 make_reconcile "$dir" > /dev/null
-rec_edit "$dir" 'r["changes"][0]["effect"] = "shape_changed"; r["outcome"] = ["updated"]; r["post_update_break"] = ["verification/models/job-drain/results/SpecFixed.json"]'
+rec_edit "$dir" 'r["changes"][0]["effect"] = "shape_changed"; r["outcome"] = ["updated"]; r["post_update_break"] = ["verification/models/job-drain/results/LeasedPrefix.json"]'
 check_case "c19-updated-with-passing-break-caught" "$dir" "1" "C19" "is not a violating result" --no-exec
 
 dir="$(make_copy c19-updated-ok)"
@@ -1859,6 +1859,72 @@ else
   fail "summary-line-on-success"
   echo "$out" | tail -3 | sed 's/^/    /'
 fi
+
+echo "== C19 tightening from the reconcile evaluation =="
+dir="$(make_copy c19-short-sha-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["commits_read"] = [new[:1]]; r["changes"][0]["commit"] = new[:1]'
+check_case "c19-short-sha-caught" "$dir" "1" "C19" "at least 7 hex digits" --no-exec
+
+dir="$(make_copy c19-correspondence-cited-file-commit-caught)"
+make_reconcile "$dir" > /dev/null
+printf 'HELPER = 1\n' > "$dir/demo/helper.py"
+git -C "$dir" add demo/helper.py
+git -C "$dir" -c user.email=t@e -c user.name=t commit -q -m "add helper"
+head_sha="$(git -C "$dir" rev-parse HEAD)"
+printf -- '- the queue helper constant lives at demo/helper.py:1\n' >> "$dir/$JD/CORRESPONDENCE.md"
+python3 - "$dir" "$head_sha" <<'PYEOF'
+import json, sys
+d, sha = sys.argv[1], sys.argv[2]
+p = d + "/verification/findings.json"
+f = json.load(open(p))
+old = f["commit"]
+f["commit"] = sha
+f["targets"][0]["reconcile"]["to_commit"] = sha
+json.dump(f, open(p, "w"), indent=2)
+c = d + "/verification/models/job-drain/CORRESPONDENCE.md"
+text = open(c).read().replace(old, sha)
+open(c, "w").write(text)
+PYEOF
+check_case "c19-correspondence-cited-file-commit-caught" "$dir" "1" "C19" "were not read" --no-exec
+
+dir="$(make_copy c19-break-from-before-dir-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["changes"][0]["effect"] = "shape_changed"; r["outcome"] = ["updated"]; r["post_update_break"] = ["verification/models/job-drain/results/before/Spec.json"]'
+check_case "c19-break-from-before-dir-caught" "$dir" "1" "C19" "is a before-update result" --no-exec
+
+dir="$(make_copy c19-stale-break-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["changes"][0]["effect"] = "shape_changed"; r["outcome"] = ["updated"]; r["post_update_break"] = ["verification/models/job-drain/results/mutant-stop-one-late.json"]'
+touch "$dir/$JD/JobDrain.tla"
+check_case "c19-stale-break-caught" "$dir" "1" "C19" "older than the updated model" --no-exec
+
+dir="$(make_copy c19-coverage-gap-ok)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["changes"][0]["effect"] = "coverage_gap"; r["changes"][0]["note"] = "touches the comment block no property covers"; r["outcome"] = ["updated"]; r["post_update_break"] = ["verification/models/job-drain/results/mutant-stop-one-late.json"]'
+check_lines "c19-coverage-gap-ok" "$dir" "0" "--no-exec" "!ERROR|C19|"
+
+dir="$(make_copy c19-coverage-gap-without-note-caught)"
+make_reconcile "$dir" > /dev/null
+rec_edit "$dir" 'r["changes"][0]["effect"] = "coverage_gap"; r["changes"][0]["note"] = ""; r["outcome"] = ["updated"]; r["post_update_break"] = ["verification/models/job-drain/results/mutant-stop-one-late.json"]'
+check_case "c19-coverage-gap-without-note-caught" "$dir" "1" "C19" "coverage_gap without a note" --no-exec
+
+dir="$(make_copy c19-old-findings-need-no-introduced-by)"
+make_reconcile "$dir" > /dev/null
+mutate "$dir" '
+import copy, json, sys
+p = sys.argv[1] + "/verification/findings.json"
+d = json.load(open(p))
+r = d["targets"][0]["reconcile"]
+r["outcome"] = ["bug"]
+new = copy.deepcopy(d["findings"][0])
+new["id"] = "002"
+new["introduced_by"] = r["to_commit"]
+new["plan"] = "001"
+d["findings"].append(new)
+json.dump(d, open(p, "w"), indent=2)
+'
+check_lines "c19-old-findings-need-no-introduced-by" "$dir" "0" "--no-exec" "!ERROR|C19|"
 
 echo ""
 echo "$pass_count passed, $fail_count failed"
