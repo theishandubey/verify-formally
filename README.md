@@ -114,6 +114,10 @@ plans/
 `skills/verify-formally/examples/retry-guard-reset/` is a complete small case: a retry loop whose two counters reset each other, the TLA+ spec that finds the infinite retry, Lean proofs of the fix and of the bug, Hypothesis property tests that find the same bug in the real code (with a real-code mutant for the property that passes), the state diagram, the repro test, the fix, and the vacuity mutants.
 Run it end to end with `skills/verify-formally/examples/retry-guard-reset/run_example.sh`.
 
+`skills/verify-formally/examples/frame-length-overflow/` is the code-level lane on C: a frame decoder whose 8-bit length arithmetic truncates, so one crafted byte makes it read past its input.
+CBMC finds the out-of-bounds read and the truncating conversion, proves the writes stay in bounds (with a real-code mutant showing that check can fail), and an AddressSanitizer repro test fails on the bug and passes after the fix.
+Run it with `skills/verify-formally/examples/frame-length-overflow/run_example.sh` (needs CBMC and a C compiler).
+
 ## Hard rules
 
 - Never modifies source code or the project's tests; writes only under `verification/` and `plans/` (or `verification-plans/` when `plans/` belongs to something else).
@@ -129,7 +133,7 @@ The checker scripts decide what counts as "pass" and "proved", so they are teste
 
 ```bash
 tests/test_scripts.sh            # run_tlc.sh and lean_audit.sh: 95 cases over adversarial TLA+ and Lean fixtures
-tests/test_code_and_diagram.sh   # run_code_check.py (recorded and real verifier output) and render_diagram.py: 60 cases
+tests/test_code_and_diagram.sh   # run_code_check.py (recorded and real verifier output), render_diagram.py, and check_run.py on the C example: 66 cases
 tests/test_check_run.sh          # check_run.py: 147 cases, a generated run and variants built to fool it
 ```
 

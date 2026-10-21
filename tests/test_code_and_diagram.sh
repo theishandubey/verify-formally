@@ -345,6 +345,70 @@ else
   cat "$work/render.out"
 fi
 
+
+echo "== check_run.py on the C example: claimed checks, sanity naming, code-level plans =="
+example="$here/../skills/verify-formally/examples/frame-length-overflow"
+check_run="$scripts_dir/check_run.py"
+if command -v cbmc > /dev/null && command -v cc > /dev/null; then
+  cx="$work/cexample"
+  git init -q "$cx"
+  cp -R "$example/src" "$example/fix.patch" "$cx/"
+  git -C "$cx" add src fix.patch
+  git -C "$cx" -c user.email=t@e -c user.name=t commit -q -m init
+  cp -Rp "$example/verification" "$example/plans" "$cx/"
+  sha="$(git -C "$cx" rev-parse HEAD)"
+  grep -rl 0000000000000000000000000000000000000000 "$cx/verification" "$cx/plans" \
+    | xargs sed -i.bak "s/0000000000000000000000000000000000000000/$sha/g"
+  find "$cx" -name '*.bak' -delete
+  python3 "$render" "$cx" > /dev/null
+  if python3 "$check_run" "$cx" > "$work/cx.out" 2>&1; then
+    pass "c-example-validates"
+  else
+    fail "c-example-validates"
+    cat "$work/cx.out"
+  fi
+  cvariant() {
+    local name="$1" edit="$2" needle="$3"
+    local d="$work/$name"
+    cp -Rp "$cx" "$d"
+    python3 - "$d" "$edit" <<'PYEOF'
+import json, sys
+d, edit = sys.argv[1], sys.argv[2]
+path = d + "/verification/findings.json"
+f = json.load(open(path))
+props = {p["name"]: p for p in f["targets"][0]["properties"]}
+exec(edit)
+json.dump(f, open(path, "w"), indent=2)
+PYEOF
+    python3 "$check_run" "$d" --no-exec > "$work/$name.out" 2>&1
+    local ec=$?
+    if [ "$ec" = 1 ] && grep "^\[ERROR\] C1[37]: " "$work/$name.out" | grep -qF -- "$needle"; then
+      pass "$name"
+    else
+      fail "$name (exit=$ec)"
+      cat "$work/$name.out"
+    fi
+  }
+  cvariant claimed-check-without-flag-caught \
+    'props["NoLengthTruncation"]["checks"].append("unsigned_overflow")' "does not enable --unsigned-overflow-check"
+  cvariant memory-safety-without-checks-caught \
+    'del props["FrameWritesInBounds"]["checks"]' "must list the checks it claims"
+  cvariant unknown-check-caught \
+    'props["FrameWritesInBounds"]["checks"].append("nan")' "cannot claim check(s) ['nan']"
+  cvariant sanity-failing-on-real-bug-caught \
+    'props["FrameWritesInBounds"]["vacuity"]["sanity"] = ["verification/models/frame-decode/results/Harness.json"]' "not on a sanity check"
+  d="$work/plan-without-code-check"
+  cp -Rp "$cx" "$d"
+  sed -i.bak 's/run_code_check.py/the verifier script/g' "$d/plans/001-widen-frame-total.md" && rm -f "$d"/plans/*.bak
+  python3 "$check_run" "$d" --no-exec > "$work/plan.out" 2>&1
+  if grep -q "^\[ERROR\] C13: .*run_code_check.py" "$work/plan.out"; then
+    pass "code-finding-plan-without-code-check-caught"
+  else
+    fail "code-finding-plan-without-code-check-caught"
+  fi
+else
+  echo "SKIP: c-example cases (cbmc or cc not installed)"
+fi
 echo
 echo "$pass_count passed, $fail_count failed"
 [ "$fail_count" -eq 0 ]

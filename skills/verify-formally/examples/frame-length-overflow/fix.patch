@@ -1,0 +1,11 @@
+--- a/src/frame.c
++++ b/src/frame.c
+@@ -6,7 +6,7 @@
+     if (in_len < 1)
+         return -1;
+     unsigned char n = in[0];
+-    unsigned char total = n + 1; /* header byte plus payload */
++    size_t total = (size_t)n + 1; /* header byte plus payload */
+     if (total > in_len)
+         return -1; /* truncated */
+     if (n > cap)

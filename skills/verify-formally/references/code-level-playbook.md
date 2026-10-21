@@ -31,6 +31,24 @@ Use both lanes on one target when a concurrency shell wraps a memory-unsafe core
 | Python | `hypothesis` | generated inputs | `@given` property tests run by pytest; a test, never a proof |
 | Go, TypeScript, others | none supported | | model the logic in TLA+ or Lean instead, and record the code-level gap in `coverage_gaps` |
 
+**Claim checks explicitly.**
+A `memory_safety`, `overflow`, or `undefined_behavior` property checked by CBMC, ESBMC, Kani, or JBMC lists the checks it claims in `checks`, and every cited run (including the mutant and sanity runs) passes each claimed check's flag explicitly, even when the verifier's version enables it by default; defaults differ between versions, and `check_run.py` (C17) refuses a claim the command line does not back.
+
+| `checks` entry | CBMC / JBMC flag | ESBMC flag | Kani |
+|---|---|---|---|
+| `bounds` | `--bounds-check` | on unless disabled | on unless disabled |
+| `pointer` | `--pointer-check` | on unless disabled | on unless disabled |
+| `signed_overflow` | `--signed-overflow-check` | `--overflow-check` | on unless disabled |
+| `unsigned_overflow` | `--unsigned-overflow-check` | `--unsigned-overflow-check` | on unless disabled |
+| `pointer_overflow` | `--pointer-overflow-check` | | |
+| `conversion` | `--conversion-check` | | |
+| `div_by_zero` | `--div-by-zero-check` | on unless disabled | on unless disabled |
+| `undefined_shift` | `--undefined-shift-check` | | on unless disabled |
+| `memory_leak` | `--memory-leak-check` | `--memory-leak-check` | |
+
+(JBMC claims only `bounds` and `div_by_zero`.)
+"On unless disabled" needs no flag: `run_code_check.py` rejects every `--no-*` flag.
+
 Prefer a verifier the repo's developers can install; say why you chose it in the README.
 `scripts/check_toolchain.sh --code` reports which code-level verifiers are installed and how to install the rest.
 Never install one without the user's say-so when the user is present; if none is available, record the gap and fall back to a model.
@@ -70,9 +88,10 @@ The harness lives in `verification/models/<slug>/` and is the only new code; the
 
 Every pass claim (`no_violation_within_bounds` or `no_counterexample_found`) needs both of these, recorded in the property's `vacuity` block; `check_run.py` verifies each one.
 
-1. **A sanity run that must fail** (`vacuity.sanity`): the same harness with a must-fail check after the call to the code under verification.
+1. **A sanity run that must fail** (`vacuity.sanity`): the same harness with a must-fail check after the call to the code under verification, and that check must be the one that fails: name it `sanity` (its message, test name, or harness name), and `check_run.py` requires a failing check that names it.
+   On buggy code the harness fails anyway, so restrict the sanity run to the sanity check (CBMC `--property harness.assertion.1`, Kani `--harness <name>_sanity`).
    It shows the assumptions are satisfiable and the harness reaches the end; an over-constrained harness (contradictory `assume`, a precondition nothing satisfies, a strategy that generates nothing) passes every property vacuously.
-   - CBMC/ESBMC: `#ifdef VF_SANITY __CPROVER_assert(0, "sanity: harness reaches the end"); #endif`, run with `-DVF_SANITY`.
+   - CBMC/ESBMC: `#ifdef VF_SANITY __CPROVER_assert(0, "sanity: harness reaches the end"); #endif`, run with `-DVF_SANITY --property harness.assertion.1`.
    - Kani: a sibling `#[kani::proof] fn <name>_sanity()` with the same body ending in `assert!(false, "sanity: ...")`, run with `--harness <name>_sanity`.
    - CrossHair: a sibling wrapper with the same preconditions and `post: False`.
    - Hypothesis: a sibling test with the same strategies ending in `assert False, "sanity: ..."`.
@@ -89,6 +108,11 @@ Every pass claim (`no_violation_within_bounds` or `no_counterexample_found`) nee
 
 A `violated` result needs neither: a counterexample on the real code is non-vacuous by construction, and Phase E's failing repro test is its evidence.
 
+**One harness, several properties.**
+When a harness shows one property violated and another holding (a read past the input, while every write stays in bounds), run the holding property on its own: CBMC `--property <check id>` restricts the run to that check, so a failure elsewhere in the harness does not hide the pass.
+Take the id from a full run's results (`frame_decode.precondition_instance.3`), confirm the mutant run fails on the same id, and say in `bounds` that the run covers that check only.
+`examples/frame-length-overflow/` does exactly this.
+
 ## 5. Run the checks
 
 Run every code-level check through `scripts/run_code_check.py`, in the foreground, one at a time; never hand-write or edit its JSON or log.
@@ -97,14 +121,21 @@ Run every code-level check through `scripts/run_code_check.py`, in the foregroun
 S=<skill>/scripts
 T=verification/models/ring-buffer
 # C, memory safety and overflow, every operation sequence up to 6 operations
+# (checks claimed: bounds, pointer, signed_overflow, unsigned_overflow, pointer_overflow)
 $S/run_code_check.py --tool cbmc --out $T/results/Harness.json --quiet --timeout 600 -- \
   cbmc $T/harness_ring_buffer.c src/ring.c -I src --function harness --unwind 7 \
+  --bounds-check --pointer-check \
   --signed-overflow-check --unsigned-overflow-check --pointer-overflow-check --trace
 $S/run_code_check.py --tool cbmc --out $T/results/sanity-Harness.json --quiet -- \
-  cbmc $T/harness_ring_buffer.c src/ring.c -I src --function harness --unwind 7 -DVF_SANITY
+  cbmc $T/harness_ring_buffer.c src/ring.c -I src --function harness --unwind 7 \
+  --bounds-check --pointer-check \
+  --signed-overflow-check --unsigned-overflow-check --pointer-overflow-check \
+  -DVF_SANITY --property harness.assertion.1
 $S/run_code_check.py --tool cbmc --out $T/results/mutant-drop-wrap-check.json --quiet \
   --mutant $T/mutants/drop-wrap-check.patch -- \
-  cbmc $T/harness_ring_buffer.c src/ring.c -I src --function harness --unwind 7
+  cbmc $T/harness_ring_buffer.c src/ring.c -I src --function harness --unwind 7 \
+  --bounds-check --pointer-check \
+  --signed-overflow-check --unsigned-overflow-check --pointer-overflow-check
 
 # Rust (from the verification crate's directory)
 $S/run_code_check.py --tool kani --cwd $T/kani --out $T/results/Harness.json --quiet -- \
@@ -126,7 +157,7 @@ Add every command to `verification/rerun.sh`.
 
 The counterexample gives concrete inputs; Phase E turns them into a failing test on the real code, as for a model trace:
 
-- CBMC/ESBMC: read the input values from the trace (`--trace`), write a C test that calls the real function with them, and build it with `-fsanitize=address,undefined`.
+- CBMC/ESBMC: read the input values from the trace (`--trace`), write a C test that calls the real function with them, and build it with `-fsanitize=address,undefined` (`examples/frame-length-overflow/verification/repro/` has a test file and a runner to copy).
   Run it through a placeholder `repro_runner` (a shell script under `verification/repro/` that builds, runs, and on a sanitizer report prints `<Property> violated: <first sanitizer line>` and exits 1), so the failure names the property.
 - Kani: `--concrete-playback=print` prints a unit test with the failing input; adapt it into a test in `verification/repro/` that catches the panic (`std::panic::catch_unwind`) and asserts with a message naming the property, so it fails by assertion, not by crash.
 - CrossHair and Hypothesis: the failing call is printed (`when calling f(12345)`, `Falsifying example: test_x(i=1, n=1)`); write a pytest repro that makes exactly that call and asserts the property.

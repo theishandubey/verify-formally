@@ -58,7 +58,9 @@
 #        to run", and not matched only by a name prefix)
 #   C11  (exec) the project's normal test collection does not include verification/repro
 #   C12  verification/README.md has the required sections; verification/rerun.sh is executable
-#   C13  each CONFIRMED high/medium finding has a real plan with the required sections
+#   C13  each CONFIRMED high/medium finding has a real plan with the required sections; its
+#        done criteria name the per-plan .cfg (unless the finding's only tool is code) and,
+#        when the finding's tools include code, the run_code_check.py command
 #   C14  every needs_decision/model_only/rejection entry has a reason or evidence (WARN)
 #   C15  a CONFIRMED finding resting on an inferred-source property is flagged (WARN)
 #   C16  every result JSON under a selected target's results/ (and every one cited by runs[],
@@ -76,8 +78,11 @@
 #        violation; no_violation_within_bounds needs every cited run to be an exhaustive pass;
 #        no_counterexample_found needs every cited run to pass; both pass claims need a passed
 #        vacuity block with a violating --mutant run and a violating sanity run of the same
-#        verifier. (exec) every cited pass or violation is re-run and must reproduce result,
-#        violated, and (for pass) exhaustive
+#        verifier, the sanity run failing on a check that names "sanity". A property of kind
+#        memory_safety, overflow, or undefined_behavior checked by CBMC/ESBMC/Kani/JBMC lists
+#        its claimed checks, and every cited run passes each claimed check's flag explicitly.
+#        (exec) every cited pass or violation is re-run and must reproduce result, violated,
+#        and (for pass) exhaustive
 #   C18  verification/state-diagram.html was written by render_diagram.py; every modeled target has a diagram.json (kind tla when the target has a TLA+
 #        property), a section that rendered without error, and input hashes that match the
 #        current files (otherwise the page is stale); a page rendered at another commit, a
@@ -2008,11 +2013,19 @@ def check_c13(ctx):
                 "C13", "finding %s: plan %s has no 'Done criteria' section" % (fid, plan_path),
                 "add 'Done criteria' to the plan",
             ))
-        if not re.search(r"\.cfg\b", text):
+        tools = {t for t in f.get("tools") or [] if isinstance(t, str)}
+        if not (tools and tools <= {"code"}) and not re.search(r"\.cfg\b", text):
             issues.append(error(
                 "C13", "finding %s: plan %s has no model-check line referencing a .cfg"
                 % (fid, plan_path),
                 "add a line naming the per-plan cfg that must pass",
+            ))
+        if "code" in tools and "run_code_check.py" not in text:
+            issues.append(error(
+                "C13", "finding %s: plan %s has no done criterion re-running the code-level "
+                "check (run_code_check.py) on the fixed code" % (fid, plan_path),
+                "add the run_code_check.py command that must pass on the fixed code, with the "
+                "same harness and bounds",
             ))
     return issues
 
@@ -2342,6 +2355,38 @@ def c16_skipped_warning(ctx):
 
 RUN_CODE_CHECK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_code_check.py")
 CODE_PASS_RESULTS = ("no_violation_within_bounds", "no_counterexample_found")
+# For each check a code property can claim, the flag every cited run must pass explicitly, per
+# verifier (None: the verifier always checks it; it can only be switched off by a --no-* flag,
+# which run_code_check.py rejects). Explicit flags keep the claim true across verifier
+# versions whose defaults differ.
+CODE_CHECK_FLAGS = {
+    "cbmc": {
+        "bounds": "--bounds-check", "pointer": "--pointer-check",
+        "signed_overflow": "--signed-overflow-check",
+        "unsigned_overflow": "--unsigned-overflow-check",
+        "pointer_overflow": "--pointer-overflow-check", "conversion": "--conversion-check",
+        "div_by_zero": "--div-by-zero-check", "undefined_shift": "--undefined-shift-check",
+        "memory_leak": "--memory-leak-check",
+    },
+    "esbmc": {
+        "bounds": None, "pointer": None, "div_by_zero": None,
+        "signed_overflow": "--overflow-check",
+        "unsigned_overflow": "--unsigned-overflow-check",
+        "memory_leak": "--memory-leak-check",
+    },
+    "kani": {
+        "bounds": None, "pointer": None, "signed_overflow": None, "unsigned_overflow": None,
+        "div_by_zero": None, "undefined_shift": None,
+    },
+}
+CODE_CHECK_FLAGS["jbmc"] = {k: v for k, v in CODE_CHECK_FLAGS["cbmc"].items()
+                            if k in ("bounds", "div_by_zero")}
+KIND_NEEDS_CHECKS = {
+    "memory_safety": {"bounds", "pointer", "memory_leak"},
+    "overflow": {"signed_overflow", "unsigned_overflow", "pointer_overflow", "conversion"},
+    "undefined_behavior": {"signed_overflow", "pointer", "bounds", "undefined_shift",
+                           "div_by_zero"},
+}
 
 
 def _is_code_result(path):
@@ -2494,8 +2539,49 @@ def check_c17(ctx):
                     "C17", "%s: no 'bounds' (unwind depth, input domain, search budget)" % tag,
                     "state the bounds the result holds under; a code-level pass covers only "
                     "its harness's inputs and unwinding"))
+            checks = prop.get("checks")
+            needs = KIND_NEEDS_CHECKS.get(prop.get("kind"))
+            table = CODE_CHECK_FLAGS.get(verifier)
+            if checks is not None and not (isinstance(checks, list) and all(
+                    isinstance(c, str) for c in checks)):
+                issues.append(error("C17", "%s: 'checks' must be a list of strings" % tag,
+                                    "list the checks the property claims, e.g. "
+                                    "[\"bounds\", \"pointer\"]"))
+                checks = None
+            if table is not None and needs and not (set(checks or []) & needs):
+                issues.append(error(
+                    "C17", "%s: a %s property checked by %s must list the checks it claims "
+                    "in 'checks' (one of %s)" % (tag, prop.get("kind"), verifier,
+                                                 sorted(needs & set(table))),
+                    "name the checks (see references/code-level-playbook.md section 2) so "
+                    "the validator can confirm each cited run enabled them"))
+            unknown = [c for c in checks or [] if table is not None and c not in table]
+            if unknown:
+                issues.append(error(
+                    "C17", "%s: %s cannot claim check(s) %s (known: %s)"
+                    % (tag, verifier, unknown, sorted(table)),
+                    "claim only checks the verifier performs"))
             if result not in ("violated",) + CODE_PASS_RESULTS:
                 continue
+            claimed_flags = [table[c] for c in checks or [] if table and table.get(c)]
+            vac_entries = []
+            if isinstance(prop.get("vacuity"), dict):
+                vac_entries = list(prop["vacuity"].get("mutants") or []) + list(
+                    prop["vacuity"].get("sanity") or [])
+            for entry in list(prop.get("runs") or []) + vac_entries:
+                p = _c17_entry_path(ctx, entry, target_dir)
+                data, issue = (_c17_inspect(ctx, p, target_dir) if p else (None, None))
+                if not data or issue:
+                    continue
+                argv = [str(a).split("=", 1)[0] for a in data.get("argv") or []]
+                missing = [f for f in claimed_flags if f not in argv]
+                if missing:
+                    issues.append(error(
+                        "C17", "%s: %s does not enable %s, which the property's checks %s "
+                        "need" % (tag, os.path.relpath(p, ctx.repo), " ".join(missing),
+                                  checks),
+                        "pass every claimed check's flag explicitly on every run (defaults "
+                        "differ between verifier versions)"))
             runs = []
             for i, run in enumerate(prop.get("runs") or []):
                 p = _c17_entry_path(ctx, run, target_dir)
@@ -2585,6 +2671,19 @@ def check_c17(ctx):
                                                data.get("result")),
                                 "a mutant the check does not catch, or a sanity check that "
                                 "passes, means the property cannot fail: fix the harness"))
+                            continue
+                        if key == "sanity" and not any(
+                                "sanity" in ("%s %s" % (c.get("id"), c.get("description"))
+                                             ).lower()
+                                for c in data.get("failed_checks") or []
+                                if isinstance(c, dict)):
+                            issues.append(error(
+                                "C17", "%s: sanity run %s failed, but not on a sanity check "
+                                "(no failing check names 'sanity')"
+                                % (tag, os.path.relpath(p, ctx.repo)),
+                                "a sanity run must fail on its own must-fail check (named "
+                                "'sanity'), not on a real bug elsewhere in the harness; "
+                                "restrict the run to it (CBMC --property <id>) if needed"))
                             continue
                         good += 1
                     if not good:

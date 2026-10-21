@@ -1,0 +1,46 @@
+{
+  "result": "violation",
+  "exhaustive": false,
+  "violated": [
+    "frame_decode.precondition_instance.3"
+  ],
+  "failed_checks": [
+    {
+      "id": "frame_decode.precondition_instance.3",
+      "description": "memcpy destination region writeable",
+      "location": "line 12"
+    }
+  ],
+  "unwinding_failures": [],
+  "checks_total": 1,
+  "counterexample": "** Results:\nsrc/frame.c function frame_decode\n[frame_decode.precondition_instance.3] line 12 memcpy destination region writeable: FAILURE\n\n** 1 of 1 failed (2 iterations)\nVERIFICATION FAILED",
+  "kind": "bounded_model_check",
+  "generator": "run_code_check.py",
+  "tool": "cbmc",
+  "tool_version": "6.4.1 (cbmc-6.4.1)",
+  "argv": [
+    "cbmc",
+    "verification/models/frame-decode/harness_frame_decode.c",
+    "src/frame.c",
+    "-I",
+    "src",
+    "--function",
+    "harness",
+    "--bounds-check",
+    "--pointer-check",
+    "--property",
+    "frame_decode.precondition_instance.3"
+  ],
+  "cwd": ".",
+  "mutant": {
+    "patch": "verification/models/frame-decode/mutants/drop-cap-check.patch",
+    "sha256": "1b48c1fce1daf87c23e1b1272f0eac15ea2d3e2adea308385c1149d067687a7f",
+    "files": [
+      "src/frame.c"
+    ]
+  },
+  "exit_code": 10,
+  "elapsed_seconds": 0.166,
+  "raw_log": "verification/models/frame-decode/results/mutant-drop-cap-check.log",
+  "command": "/home/user/verify-formally/skills/verify-formally/scripts/run_code_check.py --tool cbmc --quiet --timeout 600 --out verification/models/frame-decode/results/mutant-drop-cap-check.json --mutant verification/models/frame-decode/mutants/drop-cap-check.patch --cwd . -- cbmc verification/models/frame-decode/harness_frame_decode.c src/frame.c -I src --function harness --bounds-check --pointer-check --property frame_decode.precondition_instance.3"
+}

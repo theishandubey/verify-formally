@@ -18,6 +18,7 @@ A passing check is only as good as its bounds, its vacuity check, and its corres
 
 The output is a vetted findings table, checked models and harnesses with a code-correspondence map, an HTML page with a state diagram of every target and its counterexamples drawn on it, failing repro tests as evidence, and self-contained fix plans any agent can execute.
 A complete worked example (code, TLA+ spec, Lean model, code-level property tests with a real-code mutant, state diagram, repro test, fix, vacuity mutants) lives in [examples/retry-guard-reset/](examples/retry-guard-reset/README.md); read it once if you have not modeled with this skill before.
+For memory safety and integer overflow in C, [examples/frame-length-overflow/](examples/frame-length-overflow/README.md) shows the code-level lane end to end with CBMC: a harness, claimed checks, a real-code mutant, and a sanitizer-backed repro test.
 
 ## Hard rules
 

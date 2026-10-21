@@ -1,0 +1,182 @@
+{
+  "schema": "verify-formally-findings/2",
+  "commit": "0000000000000000000000000000000000000000",
+  "tree": "clean",
+  "generated_at": "2026-10-21",
+  "invocation": "/verify-formally code src/frame.c",
+  "defaults_taken": [
+    "path-scoped invocation (`/verify-formally code src/frame.c`): checked only frame_decode with the code-level lane, skipping the Phase B ranking step",
+    "non-interactive: no maintainer available to confirm the target or answer NEEDS-DECISION questions"
+  ],
+  "baseline": {
+    "test_command": "none (this example has no test suite of its own)",
+    "repro_runner": "bash verification/repro/run_c_repro.sh {file} {test}",
+    "collect_command": "find src -name 'test_*'",
+    "passed": 0,
+    "failed": 0,
+    "skipped": 0,
+    "lint_command": "none (no lint config in this repo)",
+    "lint": "not run",
+    "environmental_failures": [],
+    "dirty_files": []
+  },
+  "fewer_targets_reason": "path-scoped invocation names frame_decode directly; ranking and the top-3 default do not apply (this is not a full run)",
+  "targets": [
+    {
+      "id": "frame-decode",
+      "title": "frame_decode's length header and buffer bounds",
+      "files": [
+        "src/frame.c",
+        "src/frame.h"
+      ],
+      "tools": [
+        "code"
+      ],
+      "status": "modeled",
+      "properties": [
+        {
+          "name": "FrameReadsInBounds",
+          "kind": "memory_safety",
+          "statement": "for every input of up to 8 bytes and every output capacity up to 256, frame_decode never reads outside in[0..in_len)",
+          "source": "src/frame.h:6-10: 'Never reads or writes outside in[0..in_len) and out[0..cap)'",
+          "tool": "code",
+          "verifier": "cbmc",
+          "harness": "verification/models/frame-decode/harness_frame_decode.c",
+          "checks": [
+            "bounds",
+            "pointer"
+          ],
+          "bounds": "no loops; in_len 0..8, cap 0..256, every byte value; CBMC 6.4.1",
+          "result": "violated",
+          "runs": [
+            {
+              "json": "verification/models/frame-decode/results/Harness.json",
+              "result": "violation"
+            }
+          ],
+          "vacuity": {
+            "status": "passed",
+            "note": "a violation on the unmodified code is non-vacuous; the repro test is its evidence"
+          }
+        },
+        {
+          "name": "NoLengthTruncation",
+          "kind": "overflow",
+          "statement": "the header-plus-payload length n + 1 is computed without truncation",
+          "source": "src/frame.h:6-8: the frame is 'a 1-byte payload length, then the payload', so its total length is n + 1 for every n up to 255",
+          "tool": "code",
+          "verifier": "cbmc",
+          "harness": "verification/models/frame-decode/harness_frame_decode.c",
+          "checks": [
+            "conversion",
+            "signed_overflow"
+          ],
+          "bounds": "no loops; in_len 0..8, cap 0..256, every byte value; CBMC 6.4.1",
+          "result": "violated",
+          "runs": [
+            {
+              "json": "verification/models/frame-decode/results/Harness.json",
+              "result": "violation"
+            }
+          ],
+          "vacuity": {
+            "status": "passed",
+            "note": "a violation on the unmodified code is non-vacuous"
+          }
+        },
+        {
+          "name": "FrameWritesInBounds",
+          "kind": "memory_safety",
+          "statement": "for every input of up to 8 bytes and every output capacity up to 256, frame_decode never writes outside out[0..cap)",
+          "source": "src/frame.h:6-10",
+          "tool": "code",
+          "verifier": "cbmc",
+          "harness": "verification/models/frame-decode/harness_frame_decode.c",
+          "checks": [
+            "bounds",
+            "pointer"
+          ],
+          "bounds": "no loops; in_len 0..8, cap 0..256, every byte value; only the memcpy destination check (--property frame_decode.precondition_instance.3); CBMC 6.4.1",
+          "result": "no_violation_within_bounds",
+          "runs": [
+            {
+              "json": "verification/models/frame-decode/results/Writes.json",
+              "result": "pass"
+            }
+          ],
+          "vacuity": {
+            "status": "passed",
+            "mutants": [
+              "verification/models/frame-decode/results/mutant-drop-cap-check.json"
+            ],
+            "sanity": [
+              "verification/models/frame-decode/results/sanity-Writes.json"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "001",
+      "slug": "length-wrap-reads-past-input",
+      "title": "A length byte of 255 wraps the 8-bit frame total to 0, so frame_decode copies 255 bytes from a shorter input",
+      "status": "CONFIRMED",
+      "severity": "high",
+      "targets": [
+        "frame-decode"
+      ],
+      "tools": [
+        "code"
+      ],
+      "properties": [
+        "FrameReadsInBounds",
+        "NoLengthTruncation"
+      ],
+      "locations": [
+        {
+          "file": "src/frame.c",
+          "line_start": 9,
+          "line_end": 11
+        }
+      ],
+      "repro_tests": [
+        "verification/repro/repro_frame_decode.c::test_length_255_reads_past_input"
+      ],
+      "repro_command": "bash verification/repro/run_c_repro.sh verification/repro/repro_frame_decode.c test_length_255_reads_past_input",
+      "guard_tests": [
+        "verification/repro/repro_frame_decode.c::test_well_formed_frame_decodes"
+      ],
+      "evidence": "FAIL test_length_255_reads_past_input: FrameReadsInBounds violated: SUMMARY: AddressSanitizer: heap-buffer-overflow ... in memcpy",
+      "plan": "001",
+      "fix_check": "observed",
+      "file": "verification/findings/001-length-wrap-reads-past-input.md"
+    }
+  ],
+  "needs_decision": [],
+  "model_only": [],
+  "rejections": [],
+  "refuted_claims": [
+    {
+      "claim": "src/frame.h:9-10 says frame_decode 'never reads or writes outside in[0..in_len) and out[0..cap)'",
+      "result": "CBMC shows a read past in for in[0] = 255 and in_len 1..8",
+      "evidence": "verification/models/frame-decode/results/Harness.json"
+    }
+  ],
+  "plans": [
+    {
+      "id": "001",
+      "file": "plans/001-widen-frame-total.md",
+      "findings": [
+        "001"
+      ]
+    }
+  ],
+  "coverage_gaps": [
+    {
+      "area": "inputs longer than 8 bytes, NULL buffers",
+      "reason": "harness assumptions (CORRESPONDENCE.md); the read bug already shows at every length 1..8"
+    }
+  ]
+}

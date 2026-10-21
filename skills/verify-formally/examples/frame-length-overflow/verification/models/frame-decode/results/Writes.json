@@ -1,0 +1,32 @@
+{
+  "result": "pass",
+  "exhaustive": true,
+  "violated": [],
+  "failed_checks": [],
+  "unwinding_failures": [],
+  "checks_total": 1,
+  "counterexample": "",
+  "kind": "bounded_model_check",
+  "generator": "run_code_check.py",
+  "tool": "cbmc",
+  "tool_version": "6.4.1 (cbmc-6.4.1)",
+  "argv": [
+    "cbmc",
+    "verification/models/frame-decode/harness_frame_decode.c",
+    "src/frame.c",
+    "-I",
+    "src",
+    "--function",
+    "harness",
+    "--bounds-check",
+    "--pointer-check",
+    "--property",
+    "frame_decode.precondition_instance.3"
+  ],
+  "cwd": ".",
+  "mutant": null,
+  "exit_code": 0,
+  "elapsed_seconds": 0.115,
+  "raw_log": "verification/models/frame-decode/results/Writes.log",
+  "command": "/home/user/verify-formally/skills/verify-formally/scripts/run_code_check.py --tool cbmc --quiet --timeout 600 --out verification/models/frame-decode/results/Writes.json --cwd . -- cbmc verification/models/frame-decode/harness_frame_decode.c src/frame.c -I src --function harness --bounds-check --pointer-check --property frame_decode.precondition_instance.3"
+}

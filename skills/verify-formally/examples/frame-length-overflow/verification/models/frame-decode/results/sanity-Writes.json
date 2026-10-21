@@ -1,0 +1,41 @@
+{
+  "result": "violation",
+  "exhaustive": false,
+  "violated": [
+    "harness.assertion.1"
+  ],
+  "failed_checks": [
+    {
+      "id": "harness.assertion.1",
+      "description": "sanity: the harness reaches the end",
+      "location": "line 23"
+    }
+  ],
+  "unwinding_failures": [],
+  "checks_total": 1,
+  "counterexample": "** Results:\nverification/models/frame-decode/harness_frame_decode.c function harness\n[harness.assertion.1] line 23 sanity: the harness reaches the end: FAILURE\n\n** 1 of 1 failed (2 iterations)\nVERIFICATION FAILED",
+  "kind": "bounded_model_check",
+  "generator": "run_code_check.py",
+  "tool": "cbmc",
+  "tool_version": "6.4.1 (cbmc-6.4.1)",
+  "argv": [
+    "cbmc",
+    "verification/models/frame-decode/harness_frame_decode.c",
+    "src/frame.c",
+    "-I",
+    "src",
+    "--function",
+    "harness",
+    "--bounds-check",
+    "--pointer-check",
+    "-DVF_SANITY",
+    "--property",
+    "harness.assertion.1"
+  ],
+  "cwd": ".",
+  "mutant": null,
+  "exit_code": 10,
+  "elapsed_seconds": 0.165,
+  "raw_log": "verification/models/frame-decode/results/sanity-Writes.log",
+  "command": "/home/user/verify-formally/skills/verify-formally/scripts/run_code_check.py --tool cbmc --quiet --timeout 600 --out verification/models/frame-decode/results/sanity-Writes.json --cwd . -- cbmc verification/models/frame-decode/harness_frame_decode.c src/frame.c -I src --function harness --bounds-check --pointer-check -DVF_SANITY --property harness.assertion.1"
+}

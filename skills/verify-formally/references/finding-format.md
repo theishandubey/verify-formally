@@ -132,6 +132,7 @@ The mutants that make each property fail, and the sanity cfgs that confirmed rea
           "tool": "code",
           "verifier": "cbmc",
           "harness": "verification/models/frame-buffer/harness_frame_buffer.c",
+          "checks": ["bounds", "pointer"],
           "bounds": "--unwind 9; 6 appends, each len <= 8, any byte values; CAP = 16 as compiled",
           "result": "no_violation_within_bounds",
           "runs": [{"json": "verification/models/frame-buffer/results/Harness.json", "result": "pass"}],
@@ -214,6 +215,7 @@ Field rules:
 - `baseline.collect_command` lists what the normal suite collects (`... -m pytest --collect-only -q`); its output must not mention `verification/repro`.
 - Finding `status` is exactly one of `CONFIRMED`, `NEEDS-DECISION`, `MODEL-ONLY`, `BY-DESIGN`, `OUT-OF-SCOPE`, `FIXED` (set only by `reconcile`); property `tool` is exactly `tla`, `lean`, or `code`; target `status` is exactly `modeled` or `not_modeled`.
 - A `code` property names its `verifier` (the `--tool` given to `run_code_check.py`), its `harness` (a file under the target directory), and its `bounds` (unwind depth, input domain, search budget).
+  A property of kind `memory_safety`, `overflow`, or `undefined_behavior` checked by CBMC, ESBMC, Kani, or JBMC lists its claimed `checks` (`bounds`, `pointer`, `signed_overflow`, `unsigned_overflow`, `pointer_overflow`, `conversion`, `div_by_zero`, `undefined_shift`, `memory_leak`), and every cited run passes each one's flag explicitly (code-level-playbook.md section 2).
   `runs[]` cite `run_code_check.py` result JSONs on the unmodified code (`{"json", "result"}`, result copied from the JSON); `vacuity.mutants` cite `--mutant` runs and `vacuity.sanity` cite sanity-harness runs, as result JSON paths, and each must be a `violation`.
   `no_violation_within_bounds` needs every cited run to be an exhaustive pass; a non-exhaustive pass (Hypothesis, or CrossHair with an unconfirmed condition) is `no_counterexample_found`; a code property is never `proved`.
   `check_run.py` replays every code-level result against its log and re-runs every cited one.

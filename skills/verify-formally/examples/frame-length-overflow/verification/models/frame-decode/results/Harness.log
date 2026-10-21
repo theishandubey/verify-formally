@@ -1,0 +1,70 @@
+@@verify-formally run_code_check tool=cbmc
+CBMC version 6.4.1 (cbmc-6.4.1) 64-bit x86_64 linux
+Type-checking frame
+Type-checking harness_frame_decode
+Generating GOTO Program
+Adding CPROVER library (x86_64)
+Removal of function pointers and virtual functions
+Generic Property Instrumentation
+Starting Bounded Model Checking
+Passing problem to propositional reduction
+converting SSA
+Running propositional reduction
+SAT checker: instance is SATISFIABLE
+Running propositional reduction
+SAT checker: instance is SATISFIABLE
+Running propositional reduction
+SAT checker inconsistent: instance is UNSATISFIABLE
+
+** Results:
+<builtin-library-malloc> function malloc
+[malloc.assertion.1] line 31 max allocation size exceeded: SUCCESS
+[malloc.assertion.2] line 36 max allocation may fail: SUCCESS
+
+<builtin-library-memcpy> function memcpy
+[memcpy.overflow.1] line 33 arithmetic overflow on unsigned to signed type conversion in (signed long int)(size_t)n: SUCCESS
+[memcpy.pointer.1] line 33 same object violation in (const char *)(const void *)(in + (signed long int)1) >= (const char *)(void *)out + (signed long int)(size_t)n: SUCCESS
+[memcpy.pointer_arithmetic.1] line 33 pointer relation: pointer NULL in (const char *)(const void *)(in + (signed long int)1): SUCCESS
+[memcpy.pointer_arithmetic.2] line 33 pointer relation: pointer invalid in (const char *)(const void *)(in + (signed long int)1): SUCCESS
+[memcpy.pointer_arithmetic.3] line 33 pointer relation: deallocated dynamic object in (const char *)(const void *)(in + (signed long int)1): SUCCESS
+[memcpy.pointer_arithmetic.4] line 33 pointer relation: dead object in (const char *)(const void *)(in + (signed long int)1): SUCCESS
+[memcpy.pointer_arithmetic.5] line 33 pointer relation: pointer outside object bounds in (const char *)(const void *)(in + (signed long int)1): SUCCESS
+[memcpy.pointer_arithmetic.6] line 33 pointer relation: invalid integer address in (const char *)(const void *)(in + (signed long int)1): SUCCESS
+[memcpy.pointer_arithmetic.7] line 33 pointer relation: pointer NULL in (const char *)(void *)out + (signed long int)(size_t)n: SUCCESS
+[memcpy.pointer_arithmetic.8] line 33 pointer relation: pointer invalid in (const char *)(void *)out + (signed long int)(size_t)n: SUCCESS
+[memcpy.pointer_arithmetic.9] line 33 pointer relation: deallocated dynamic object in (const char *)(void *)out + (signed long int)(size_t)n: SUCCESS
+[memcpy.pointer_arithmetic.10] line 33 pointer relation: dead object in (const char *)(void *)out + (signed long int)(size_t)n: SUCCESS
+[memcpy.pointer_arithmetic.11] line 33 pointer relation: pointer outside object bounds in (const char *)(void *)out + (signed long int)(size_t)n: SUCCESS
+[memcpy.pointer_arithmetic.12] line 33 pointer relation: invalid integer address in (const char *)(void *)out + (signed long int)(size_t)n: SUCCESS
+[memcpy.overflow.2] line 34 arithmetic overflow on unsigned to signed type conversion in (signed long int)(size_t)n: SUCCESS
+[memcpy.pointer.2] line 34 same object violation in (const char *)(void *)out >= (const char *)(const void *)(in + (signed long int)1) + (signed long int)(size_t)n: SUCCESS
+[memcpy.pointer_arithmetic.13] line 34 pointer relation: pointer NULL in (const char *)(void *)out: SUCCESS
+[memcpy.pointer_arithmetic.14] line 34 pointer relation: pointer invalid in (const char *)(void *)out: SUCCESS
+[memcpy.pointer_arithmetic.15] line 34 pointer relation: deallocated dynamic object in (const char *)(void *)out: SUCCESS
+[memcpy.pointer_arithmetic.16] line 34 pointer relation: dead object in (const char *)(void *)out: SUCCESS
+[memcpy.pointer_arithmetic.17] line 34 pointer relation: pointer outside object bounds in (const char *)(void *)out: SUCCESS
+[memcpy.pointer_arithmetic.18] line 34 pointer relation: invalid integer address in (const char *)(void *)out: SUCCESS
+[memcpy.pointer_arithmetic.19] line 34 pointer relation: pointer NULL in (const char *)(const void *)(in + (signed long int)1) + (signed long int)(size_t)n: SUCCESS
+[memcpy.pointer_arithmetic.20] line 34 pointer relation: pointer invalid in (const char *)(const void *)(in + (signed long int)1) + (signed long int)(size_t)n: SUCCESS
+[memcpy.pointer_arithmetic.21] line 34 pointer relation: deallocated dynamic object in (const char *)(const void *)(in + (signed long int)1) + (signed long int)(size_t)n: SUCCESS
+[memcpy.pointer_arithmetic.22] line 34 pointer relation: dead object in (const char *)(const void *)(in + (signed long int)1) + (signed long int)(size_t)n: SUCCESS
+[memcpy.pointer_arithmetic.23] line 34 pointer relation: pointer outside object bounds in (const char *)(const void *)(in + (signed long int)1) + (signed long int)(size_t)n: SUCCESS
+[memcpy.pointer_arithmetic.24] line 34 pointer relation: invalid integer address in (const char *)(const void *)(in + (signed long int)1) + (signed long int)(size_t)n: SUCCESS
+[memcpy.overflow.3] line 44 arithmetic overflow on unsigned to signed type conversion in (signed long int)n: SUCCESS
+[memcpy.overflow.4] line 44 arithmetic overflow on signed to unsigned type conversion in (unsigned long int)(signed long int)n: SUCCESS
+
+src/frame.c function frame_decode
+[frame_decode.pointer_dereference.1] line 8 dereference failure: pointer NULL in in[(signed long int)0]: SUCCESS
+[frame_decode.pointer_dereference.2] line 8 dereference failure: pointer invalid in in[(signed long int)0]: SUCCESS
+[frame_decode.pointer_dereference.3] line 8 dereference failure: deallocated dynamic object in in[(signed long int)0]: SUCCESS
+[frame_decode.pointer_dereference.4] line 8 dereference failure: dead object in in[(signed long int)0]: SUCCESS
+[frame_decode.pointer_dereference.5] line 8 dereference failure: pointer outside object bounds in in[(signed long int)0]: SUCCESS
+[frame_decode.pointer_dereference.6] line 8 dereference failure: invalid integer address in in[(signed long int)0]: SUCCESS
+[frame_decode.overflow.1] line 9 arithmetic overflow on signed + in (signed int)n + 1: SUCCESS
+[frame_decode.overflow.2] line 9 arithmetic overflow on signed to unsigned type conversion in (unsigned char)((signed int)n + 1): FAILURE
+[frame_decode.precondition_instance.1] line 14 memcpy src/dst overlap: SUCCESS
+[frame_decode.precondition_instance.2] line 14 memcpy source region readable: FAILURE
+[frame_decode.precondition_instance.3] line 14 memcpy destination region writeable: SUCCESS
+
+** 2 of 43 failed (3 iterations)
+VERIFICATION FAILED

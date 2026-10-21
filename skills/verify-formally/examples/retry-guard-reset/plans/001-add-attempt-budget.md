@@ -67,6 +67,7 @@ def call_with_retry(op, max_errors=3, max_timeouts=3):
 | Repro test | `.venv/bin/python -m pytest -q -p no:cacheprovider verification/repro/repro_retry_guard_reset.py::test_alternating_failures_cause_runaway_retry` | 1 passed (after fix); fails today with `AssertionError: BoundedAttempts violated` |
 | Full tests | `.venv/bin/python -m pytest -q -p no:cacheprovider verification/repro/repro_retry_guard_reset.py` | 3 passed |
 | Model check (fixed) | `<skill>/scripts/run_tlc.sh verification/models/retry-guard/RetryGuard.tla verification/models/retry-guard/Plan001.cfg` | `"result": "pass"` |
+| Code-level check (fixed) | `<skill>/scripts/run_code_check.py --tool hypothesis --out /tmp/fixed.json --quiet -- .venv/bin/python -m pytest -q -p no:cacheprovider verification/models/retry-guard/prop_retry_guard.py::test_calls_bounded_by_both_limits verification/models/retry-guard/prop_retry_guard.py::test_error_streak_gives_up_exactly` | `pass - checks=2` |
 
 ## Scope
 
@@ -122,6 +123,7 @@ All must hold:
 - [ ] Repro command passes.
 - [ ] `.venv/bin/python -m pytest -q -p no:cacheprovider tests/test_retry.py` exits 0 with 3 passed.
 - [ ] `run_tlc.sh verification/models/retry-guard/RetryGuard.tla verification/models/retry-guard/Plan001.cfg` reports `pass` (unchanged model; confirms the fix matches the modeled fix).
+- [ ] The code-level check (`run_code_check.py --tool hypothesis`, command above, unchanged harness) reports `pass` on the fixed `retry.py`: `CallsBoundedOnRealCode` and `StreakGivesUp` both hold.
 - [ ] No files outside the in-scope list are modified (`git status`).
 - [ ] `plans/README.md` row updated.
 

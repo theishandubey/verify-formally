@@ -1,0 +1,22 @@
+{
+  "kind": "manual",
+  "states": [
+    {"id": "entry", "label": "entry: in_len, cap given", "code": "src/frame.c:4"},
+    {"id": "empty", "label": "rejected: empty input", "code": "src/frame.c:6-7"},
+    {"id": "header", "label": "header read: n = in[0], total = n + 1 (unsigned char)", "code": "src/frame.c:8-9"},
+    {"id": "truncated", "label": "rejected: truncated", "code": "src/frame.c:10-11"},
+    {"id": "too_big", "label": "rejected: does not fit", "code": "src/frame.c:12-13"},
+    {"id": "copied", "label": "copied n bytes from in + 1 to out", "code": "src/frame.c:14-15"}
+  ],
+  "initial": ["entry"],
+  "transitions": [
+    {"from": "entry", "to": "empty", "label": "in_len < 1", "code": "src/frame.c:6"},
+    {"from": "entry", "to": "header", "label": "in_len >= 1", "code": "src/frame.c:6"},
+    {"from": "header", "to": "truncated", "label": "total > in_len", "code": "src/frame.c:10"},
+    {"from": "header", "to": "too_big", "label": "total <= in_len, n > cap", "code": "src/frame.c:12"},
+    {"from": "header", "to": "copied", "label": "total <= in_len, n <= cap", "code": "src/frame.c:12-14"}
+  ],
+  "highlight": [
+    {"name": "001: n = 255 wraps total to 0", "path": ["entry", "header", "copied"], "violated": "FrameReadsInBounds"}
+  ]
+}
